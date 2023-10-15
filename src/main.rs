@@ -26,13 +26,14 @@ impl Handler<ServerMessage> for UserSocket {
     type Result = ();
 
     fn handle(&mut self, msg: ServerMessage, ctx: &mut Self::Context) {
-        ctx.text(match msg {
-            ServerMessage::UserJoined(name) => format!("{} joined the game", name),
-            ServerMessage::GameGuess => "Guessing".to_string(),
-            ServerMessage::GameStarting() => "Game Started".to_string(),
-            ServerMessage::GameEnded => "Game Ended".to_string(),
-            ServerMessage::GameSelectingSongs => "Selecting Songs".to_string(),
-        });
+        ctx.text(format!("{:?}", msg));
+        // ctx.text(match msg {
+            // ServerMessage::UserJoined(name) => format!("{} joined the game", name),
+            // ServerMessage::GameGuess => "Guessing".to_string(),
+            // ServerMessage::GameStarting() => "Game Started".to_string(),
+            // ServerMessage::GameEnded => "Game Ended".to_string(),
+            // ServerMessage::GameSelectingSongs => "Selecting Songs".to_string(),
+        // });
     }
 }
 
