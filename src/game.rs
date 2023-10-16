@@ -11,14 +11,14 @@ use crate::{
     UserSocket,
 };
 
-static GAMES: Lazy<RwLock<HashMap<u32, Game>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+static GAMES: Lazy<RwLock<HashMap<u16, Game>>> = Lazy::new(|| RwLock::new(HashMap::new()));
 
 #[derive(Message)]
 #[rtype(result = "()")]
 pub enum UserAction {
     SetUsername(String),
     NewGame,
-    JoinGame(u32),
+    JoinGame(u16),
     ReadyUp,
     StartGame,
     AddSong(String),
@@ -50,7 +50,7 @@ impl From<(&str, &str)> for UserAction {
 pub enum ServerMessage {
     ServerAck,
     Error(String),
-    GameCreated(u32),
+    GameCreated(u16),
     GameNotFound,
     // lobby
     UserJoin(String),
@@ -78,7 +78,7 @@ pub enum PlayPhase<'a> {
 
 #[derive(Clone)]
 pub struct Game<'a> {
-    pub id: u32,
+    pub id: u16,
     pub players: Vec<Arc<RwLock<User>>>,
     pub state: GameStatus<'a>,
 }
