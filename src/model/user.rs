@@ -6,8 +6,9 @@ type Message = String;
 
 #[derive(Clone)]
 pub struct User {
-    pub id: i32,
+    pub id: u32,
     pub name: String,
     pub score: u8,
+    pub game_id: Option<u32>,
     pub ws: Option<Addr<UserSocket>>,
 }

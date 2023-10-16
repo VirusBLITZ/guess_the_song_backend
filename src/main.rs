@@ -1,7 +1,10 @@
 mod game;
 mod model;
 
-use std::sync::{Arc, RwLock};
+use std::{
+    sync::{Arc, RwLock},
+    time::{Duration, Instant},
+};
 
 use actix::{Actor, ActorContext, AsyncContext, Handler, StreamHandler};
 use actix_web::{get, web, App, Error, HttpRequest, HttpResponse, HttpServer};
@@ -11,14 +14,61 @@ use model::user::User;
 
 pub struct UserSocket {
     pub user: Arc<RwLock<User>>,
+    hb: Instant,
+}
+
+impl UserSocket {
+    pub fn new() -> Self {
+        Self {
+            hb: Instant::now(),
+            user: Arc::new(RwLock::new(User {
+                id: rand::random(),
+                name: "User ".to_string() + rand::random::<u8>().to_string().as_str(),
+                score: 0,
+                game_id: None,
+                ws: None,
+            })),
+        }
+    }
+
+    /// heartbeat
+    fn hb(&self, ctx: &mut <Self as Actor>::Context) {
+        const HEARTBEAT_INTERVAL: std::time::Duration = Duration::from_secs(10);
+        const CLIENT_TIMEOUT: std::time::Duration = Duration::from_secs(20);
+        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
+            // check client heartbeats
+            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
+                println!("Websocket Client heartbeat failed, disconnecting!");
+
+                ctx.stop();
+                return;
+            }
+
+            ctx.ping(b"");
+        });
+    }
 }
 
 impl Actor for UserSocket {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
+        self.hb(ctx);
         ctx.text("Hello World!");
         self.user.write().unwrap().ws = Some(ctx.address());
+    }
+
+    fn stopping(&mut self, ctx: &mut Self::Context) -> actix::Running {
+        println!("actor {} stopping", self.user.read().unwrap().id);
+        // remove from current lobby
+        // dereference from self
+
+        // if let Some(game_id) = self.user.read().unwrap().game_id {
+        //     let mut game = game::GAME.write().unwrap();
+        //     let user = self.user.clone();
+        //     game.leave_game(user);
+        // }
+        actix::Running::Stop
     }
 }
 
@@ -48,11 +98,19 @@ impl Handler<ServerMessage> for UserSocket {
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for UserSocket {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-        dbg!(&msg);
         match msg {
-            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
+            Ok(ws::Message::Ping(msg)) => {
+                self.hb = Instant::now();
+                ctx.pong(&msg);
+            }
+            Ok(ws::Message::Pong(_)) => {
+                self.hb = Instant::now();
+            }
             Ok(ws::Message::Text(text)) => match text.to_string().trim().split_once(' ') {
-                Some((action, body)) => game::handle_user_msg(action, body, self.user.clone()),
+                Some((action, body)) => {
+                    self.hb = Instant::now();
+                    game::handle_user_msg(action, body, self.user.clone())
+                }
                 _ => ctx.text("?"),
             },
             _ => {
@@ -68,19 +126,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for UserSocket {
 
 #[get("/ws")]
 async fn index(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
-    let resp = ws::start(
-        UserSocket {
-            user: Arc::new(RwLock::new(User {
-                id: rand::random(),
-                name: "User ".to_string() + rand::random::<u8>().to_string().as_str(),
-                score: 0,
-                ws: None,
-            })),
-        },
-        &req,
-        stream,
-    );
-    println!("{:?}", resp);
+    let resp = ws::start(UserSocket::new(), &req, stream);
+    // println!("{:?}", resp);
     resp
 }
 
