@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use actix::Addr;
-use actix_web_actors::ws::WebsocketContext;
 
 use crate::UserSocket;
 

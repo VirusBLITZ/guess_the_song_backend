@@ -49,7 +49,9 @@ impl From<(&str, &str)> for UserAction {
 #[rtype(result = "()")]
 pub enum ServerMessage {
     ServerAck,
+    Error(String),
     GameCreated(u32),
+    GameNotFound,
     // lobby
     UserJoin(String),
     UserLeave(String),
@@ -95,7 +97,7 @@ impl Game<'_> {
         self.players.iter().for_each(|player| {
             addr.do_send(ServerMessage::UserJoin(player.read().unwrap().name.clone()));
         });
-        self.players.push(user.clone());
+        self.players.push(user);
     }
 
     fn broadcast_message(&self, msg: ServerMessage) {
@@ -115,6 +117,7 @@ pub struct GamesState {
 pub fn handle_user_msg(action: &str, conent: &str, user: Arc<RwLock<User>>) {
     let user_addr = user.read().unwrap().ws.as_ref().unwrap().clone();
     let ack = || user_addr.do_send(ServerMessage::ServerAck);
+
     match UserAction::from((action, conent)) {
         UserAction::SetUsername(name) => {
             user.write().unwrap().name = name;
@@ -134,8 +137,10 @@ pub fn handle_user_msg(action: &str, conent: &str, user: Arc<RwLock<User>>) {
         }
         UserAction::JoinGame(room_id) => {
             let mut games = GAMES.write().unwrap();
-            let game = games.get_mut(&room_id).unwrap();
-            game.join_game(user, user_addr);
+            match games.get_mut(&room_id) {
+                Some(game) => game.join_game(user, user_addr),
+                None => user_addr.do_send(ServerMessage::GameNotFound),
+            };
         }
         _ => {}
     }

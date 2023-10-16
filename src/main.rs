@@ -3,11 +3,11 @@ mod model;
 
 use std::sync::{Arc, RwLock};
 
-use actix::{Actor, ActorContext, AsyncContext, Handler, Message, StreamHandler};
+use actix::{Actor, ActorContext, AsyncContext, Handler, StreamHandler};
 use actix_web::{get, web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws::{self, CloseCode, CloseReason};
 use game::ServerMessage;
-use model::{user::User, *};
+use model::user::User;
 
 pub struct UserSocket {
     pub user: Arc<RwLock<User>>,
@@ -28,7 +28,19 @@ impl Handler<ServerMessage> for UserSocket {
     fn handle(&mut self, msg: ServerMessage, ctx: &mut Self::Context) {
         ctx.text(match msg {
             ServerMessage::ServerAck => "k".to_string(),
-            ServerMessage::UserJoin(name) => format!("{} joined the game", name),
+            ServerMessage::GameCreated(id) => format!("game_created {}", id),
+            ServerMessage::GameNotFound => "game_not_found".to_string(),
+            ServerMessage::UserJoin(name) => format!("user_join \"{}\"", name),
+            ServerMessage::UserLeave(name) => format!("user_leave \"{}\"", name),
+            ServerMessage::UserReady(name) => format!("user_ready \"{}\"", name),
+            ServerMessage::UserUnready(name) => format!("user_unready \"{}\"", name),
+            ServerMessage::GameStartAt(time) => format!("game_start_at {}", time),
+            ServerMessage::GameStartSelect => "game_start_select".to_string(),
+            ServerMessage::Suggestion(songs) => format!(
+                "suggestion {}",
+                dbg!(serde_json::to_string(&songs).unwrap())
+            ),
+            // ServerMessage::GamePlayAudio
             _ => format!("{:?}", msg),
         });
     }
@@ -39,7 +51,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for UserSocket {
         dbg!(&msg);
         match msg {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
-            Ok(ws::Message::Text(text)) => match text.to_string().trim().split_once(" ") {
+            Ok(ws::Message::Text(text)) => match text.to_string().trim().split_once(' ') {
                 Some((action, body)) => game::handle_user_msg(action, body, self.user.clone()),
                 _ => ctx.text("?"),
             },
