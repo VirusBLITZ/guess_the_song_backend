@@ -93,12 +93,8 @@ impl Game<'_> {
     }
 
     fn join_game(&mut self, user: Arc<RwLock<User>>, addr: Addr<UserSocket>) {
-        {
-            println!("[join] aquiring join lock");
-            user.write().unwrap().game_id = Some(self.id);
-            println!("[join] aquired join lock");
-        }
-        println!("[join] read user name lock");
+        user.write().unwrap().game_id = Some(self.id);
+
         self.broadcast_message(ServerMessage::UserJoin(user.read().unwrap().name.clone()));
         self.players.iter().for_each(|player| {
             addr.do_send(ServerMessage::UserJoin(player.read().unwrap().name.clone()));
@@ -108,15 +104,12 @@ impl Game<'_> {
 
     fn leave_game(&mut self, user: Arc<RwLock<User>>) {
         let user_id = user.read().unwrap().id;
-        {
-            println!("[leave] read user lock 2");
-            let name = user.read().unwrap().name.clone();
-            println!("[leave] read user lock 3");
-            self.broadcast_message(ServerMessage::UserLeave(name));
-            self.players
-                .retain(|player| player.read().unwrap().id != user_id);
-            println!("[leave] removed user {}", user_id);
-        }
+
+        let name = user.read().unwrap().name.clone();
+        self.broadcast_message(ServerMessage::UserLeave(name));
+        self.players
+            .retain(|player| player.read().unwrap().id != user_id);
+
         drop(user_id);
         println!("[leave] before write user lock 4");
         user.write().unwrap().game_id = None;
@@ -125,7 +118,6 @@ impl Game<'_> {
 
     fn broadcast_message(&self, msg: ServerMessage) {
         self.players.iter().for_each(|user| {
-            println!("broadcast lock");
             if let Some(ws) = user.read().unwrap().ws.as_ref() {
                 ws.do_send(msg.clone());
             };
@@ -139,7 +131,6 @@ pub struct GamesState {
 }
 
 pub fn handle_user_msg(action: &str, conent: &str, user: Arc<RwLock<User>>) {
-    println!("read user lock for addr");
     let user_addr = user.read().unwrap().ws.as_ref().unwrap().clone();
 
     // print!("write user lock");
@@ -158,7 +149,6 @@ pub fn handle_user_msg(action: &str, conent: &str, user: Arc<RwLock<User>>) {
             let game_id = game.id;
             game.join_game(user.clone(), user_addr.clone());
             GAMES.write().unwrap().insert(game.id, game);
-            println!("read user lock");
             user.read()
                 .unwrap()
                 .ws
@@ -168,7 +158,6 @@ pub fn handle_user_msg(action: &str, conent: &str, user: Arc<RwLock<User>>) {
         }
         UserAction::JoinGame(room_id) => {
             let mut games = GAMES.write().unwrap();
-            println!("read user lock 1");
             let opt_room_id = user.read().unwrap().game_id;
             if let Some(room_id) = opt_room_id {
                 if let Some(game) = games.get_mut(&room_id) {
@@ -179,10 +168,9 @@ pub fn handle_user_msg(action: &str, conent: &str, user: Arc<RwLock<User>>) {
                 Some(game) => game.join_game(user.clone(), user_addr),
                 None => user_addr.do_send(ServerMessage::GameNotFound),
             };
-            println!("joined")
+            println!("joined room")
         }
         UserAction::LeaveGame => {
-            println!("read user lock");
             if let Some(game_id) = user.read().unwrap().game_id {
                 let mut games = GAMES.write().unwrap();
                 if let Some(game) = games.get_mut(&game_id) {
@@ -190,6 +178,6 @@ pub fn handle_user_msg(action: &str, conent: &str, user: Arc<RwLock<User>>) {
                 }
             }
         }
-        _ => {}
+        _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }
 }
