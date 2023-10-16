@@ -1,16 +1,16 @@
 mod game;
 mod model;
 
-use std::{ops::Add, thread};
+use std::sync::{Arc, RwLock};
 
-use actix::{Actor, ActorContext, AsyncContext, Message, StreamHandler, Handler};
+use actix::{Actor, ActorContext, AsyncContext, Handler, Message, StreamHandler};
 use actix_web::{get, web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws::{self, CloseCode, CloseReason};
-use game::{GamesState, ServerMessage};
+use game::ServerMessage;
 use model::{user::User, *};
 
 pub struct UserSocket {
-    pub user: User,
+    pub user: Arc<RwLock<User>>,
 }
 
 impl Actor for UserSocket {
@@ -18,7 +18,7 @@ impl Actor for UserSocket {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.text("Hello World!");
-        ctx.address();
+        self.user.write().unwrap().ws = Some(ctx.address());
     }
 }
 
@@ -26,27 +26,21 @@ impl Handler<ServerMessage> for UserSocket {
     type Result = ();
 
     fn handle(&mut self, msg: ServerMessage, ctx: &mut Self::Context) {
-        ctx.text(format!("{:?}", msg));
-        // ctx.text(match msg {
-            // ServerMessage::UserJoined(name) => format!("{} joined the game", name),
-            // ServerMessage::GameGuess => "Guessing".to_string(),
-            // ServerMessage::GameStarting() => "Game Started".to_string(),
-            // ServerMessage::GameEnded => "Game Ended".to_string(),
-            // ServerMessage::GameSelectingSongs => "Selecting Songs".to_string(),
-        // });
+        ctx.text(match msg {
+            
+            ServerMessage::UserJoin(name) => format!("{} joined the game", name),
+            _ => format!("{:?}", msg)
+        });
     }
 }
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for UserSocket {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         dbg!(&msg);
-        if self.user.ws.is_none() {
-            // self.user.ws = ;
-        }
         match msg {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Text(text)) => match text.to_string().trim().split_once(" ") {
-                Some((action, body)) => game::handle_user_msg(action, body, &self.user),
+                Some((action, body)) => game::handle_user_msg(action, body, self.user.clone()),
                 _ => ctx.text("?"),
             },
             _ => {
@@ -64,12 +58,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for UserSocket {
 async fn index(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
     let resp = ws::start(
         UserSocket {
-            user: User {
+            user: Arc::new(RwLock::new(User {
                 id: rand::random(),
                 name: "User ".to_string() + rand::random::<u8>().to_string().as_str(),
                 score: 0,
                 ws: None,
-            },
+            })),
         },
         &req,
         stream,
