@@ -27,9 +27,9 @@ impl Handler<ServerMessage> for UserSocket {
 
     fn handle(&mut self, msg: ServerMessage, ctx: &mut Self::Context) {
         ctx.text(match msg {
-            
+            ServerMessage::ServerAck => "k".to_string(),
             ServerMessage::UserJoin(name) => format!("{} joined the game", name),
-            _ => format!("{:?}", msg)
+            _ => format!("{:?}", msg),
         });
     }
 }

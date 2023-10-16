@@ -16,6 +16,7 @@ static GAMES: Lazy<RwLock<HashMap<u32, Game>>> = Lazy::new(|| RwLock::new(HashMa
 #[derive(Message)]
 #[rtype(result = "()")]
 pub enum UserAction {
+    SetUsername(String),
     NewGame,
     JoinGame(u32),
     ReadyUp,
@@ -30,6 +31,7 @@ pub enum UserAction {
 impl From<(&str, &str)> for UserAction {
     fn from(value: (&str, &str)) -> Self {
         match value {
+            ("set_username", name) => UserAction::SetUsername(name.to_string()),
             ("new", _) => UserAction::NewGame,
             ("join", game_id) => UserAction::JoinGame(game_id.parse().unwrap_or(0)),
             ("ready", _) => UserAction::ReadyUp,
@@ -112,7 +114,12 @@ pub struct GamesState {
 
 pub fn handle_user_msg(action: &str, conent: &str, user: Arc<RwLock<User>>) {
     let user_addr = user.read().unwrap().ws.as_ref().unwrap().clone();
+    let ack = || user_addr.do_send(ServerMessage::ServerAck);
     match UserAction::from((action, conent)) {
+        UserAction::SetUsername(name) => {
+            user.write().unwrap().name = name;
+            ack();
+        }
         UserAction::NewGame => {
             let mut game = Game::new();
             let game_id = game.id;
