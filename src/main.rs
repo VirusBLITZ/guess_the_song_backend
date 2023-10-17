@@ -9,7 +9,7 @@ use std::{
 use actix::{Actor, ActorContext, AsyncContext, Handler, StreamHandler};
 use actix_web::{get, web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws::{self, CloseCode, CloseReason};
-use game::ServerMessage;
+use game::{ServerMessage, UserAction};
 use model::user::User;
 
 pub struct UserSocket {
@@ -58,16 +58,9 @@ impl Actor for UserSocket {
         self.user.write().unwrap().ws = Some(ctx.address());
     }
 
-    fn stopping(&mut self, ctx: &mut Self::Context) -> actix::Running {
-        println!("actor {} stopping", self.user.read().unwrap().id);
-        // remove from current lobby
-        // dereference from self
-
-        // if let Some(game_id) = self.user.read().unwrap().game_id {
-        //     let mut game = game::GAME.write().unwrap();
-        //     let user = self.user.clone();
-        //     game.leave_game(user);
-        // }
+    fn stopping(&mut self, _: &mut Self::Context) -> actix::Running {
+        println!("[disconnect] actor {} stopped", self.user.read().unwrap().id);
+        game::handle_user_msg(UserAction::LeaveGame, self.user.clone());
         actix::Running::Stop
     }
 }
@@ -110,7 +103,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for UserSocket {
             Ok(ws::Message::Text(text)) => match text.to_string().trim().split_once(' ') {
                 Some((action, body)) => {
                     self.hb = Instant::now();
-                    game::handle_user_msg(action, body, self.user.clone())
+                    game::handle_user_msg(UserAction::from((action, body)), self.user.clone())
                 }
                 _ => ctx.text("?"),
             },
