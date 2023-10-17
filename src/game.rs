@@ -155,6 +155,15 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
     // println!("write user lock");
 
     let ack = || user_addr.do_send(ServerMessage::ServerAck);
+    let leave_current = || {
+        let mut games = GAMES.write().unwrap();
+        let opt_prev_room_id = user.read().unwrap().game_id;
+        if let Some(room_id) = opt_prev_room_id {
+            if let Some(game) = games.get_mut(&room_id) {
+                game.leave_game(user.clone());
+            }
+        }
+    };
 
     match action {
         UserAction::SetUsername(name) => {
@@ -162,6 +171,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             ack();
         }
         UserAction::NewGame => {
+            leave_current();
             let mut game = Game::new();
             let game_id = game.id;
             game.join_game(user.clone(), user_addr.clone());
@@ -174,13 +184,8 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 .do_send(ServerMessage::GameCreated(game_id));
         }
         UserAction::JoinGame(room_id) => {
+            leave_current();
             let mut games = GAMES.write().unwrap();
-            let opt_prev_room_id = user.read().unwrap().game_id;
-            if let Some(room_id) = opt_prev_room_id {
-                if let Some(game) = games.get_mut(&room_id) {
-                    game.leave_game(user.clone());
-                }
-            }
             match games.get_mut(&room_id) {
                 Some(game) => game.join_game(user.clone(), user_addr),
                 None => user_addr.do_send(ServerMessage::GameNotFound),
@@ -201,12 +206,13 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             }
         }
         UserAction::LeaveGame => {
-            if let Some(game_id) = user.read().unwrap().game_id {
-                let mut games = GAMES.write().unwrap();
-                if let Some(game) = games.get_mut(&game_id) {
-                    game.leave_game(user.clone());
-                }
-            }
+            leave_current();
+            // if let Some(game_id) = user.read().unwrap().game_id {
+            //     let mut games = GAMES.write().unwrap();
+            //     if let Some(game) = games.get_mut(&game_id) {
+            //         game.leave_game(user.clone());
+            //     }
+            // }
         }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }
