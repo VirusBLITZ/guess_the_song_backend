@@ -59,7 +59,10 @@ impl Actor for UserSocket {
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> actix::Running {
-        println!("[disconnect] actor {} stopped", self.user.read().unwrap().id);
+        println!(
+            "[disconnect] actor {} stopped",
+            self.user.read().unwrap().id
+        );
 
         game::handle_user_msg(UserAction::LeaveGame, self.user.clone());
         actix::Running::Stop

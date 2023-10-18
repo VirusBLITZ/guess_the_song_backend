@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use actix::{Addr, Message};
@@ -140,11 +140,6 @@ impl Game<'_> {
         }
         // ServerMessage::ServerAck
     }
-}
-
-#[derive(Default)]
-pub struct GamesState {
-    pub games: Mutex<HashMap<u32, String>>,
 }
 
 pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
