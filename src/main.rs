@@ -1,5 +1,6 @@
 mod game;
 mod model;
+mod music_handler;
 
 use std::{
     sync::{Arc, RwLock},
