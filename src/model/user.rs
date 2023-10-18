@@ -4,7 +4,7 @@ use crate::UserSocket;
 
 type Message = String;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct User {
     pub id: u32,
     pub name: String,

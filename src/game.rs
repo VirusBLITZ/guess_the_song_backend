@@ -1,6 +1,8 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, RwLockReadGuard},
+    thread,
+    time::Duration,
 };
 
 use actix::{Addr, Message};
@@ -20,6 +22,7 @@ pub enum UserAction {
     NewGame,
     JoinGame(u16),
     ReadyUp,
+    Unready,
     StartGame,
     AddSong(String),
     StartGuessing,
@@ -35,6 +38,7 @@ impl From<(&str, &str)> for UserAction {
             ("new", _) => UserAction::NewGame,
             ("join", game_id) => UserAction::JoinGame(game_id.parse().unwrap_or(0)),
             ("ready_up", _) => UserAction::ReadyUp,
+            ("unready", _) => UserAction::Unready,
             ("start", _) => UserAction::StartGame,
             ("add", id) => UserAction::AddSong(id.to_string()),
             ("start_guessing", _) => UserAction::StartGuessing,
@@ -63,14 +67,14 @@ pub enum ServerMessage {
     Suggestion(Vec<invidious::hidden::SearchItem>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum GameStatus<'a> {
-    Lobby(Vec<(&'a User, bool)>),
+    Lobby(u8), // ready count
     Playing(Vec<Song>, PlayPhase<'a>),
     Ended,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PlayPhase<'a> {
     SelectingSongs,
     GuessingSongs(Vec<&'a User>),
@@ -88,8 +92,13 @@ impl Game<'_> {
         Self {
             id: rand::random(),
             players: Vec::new(),
-            state: GameStatus::Lobby(Vec::new()),
+            state: GameStatus::Lobby(0),
         }
+    }
+
+    fn set_state(&mut self, state: GameStatus<'static>) {
+        println!("[GAME {}] now in state {:?}", self.id, state);
+        self.state = state;
     }
 
     fn join_game(&mut self, user: Arc<RwLock<User>>, addr: Addr<UserSocket>) {
@@ -123,22 +132,61 @@ impl Game<'_> {
         });
     }
 
-    fn ready(&self, user: std::sync::RwLockReadGuard<'_, User>) -> ServerMessage {
+    fn ready(&mut self, user: RwLockReadGuard<'_, User>) -> ServerMessage {
         let name = user.name.clone();
         self.broadcast_message(ServerMessage::UserReady(name));
-        match &self.state {
-            GameStatus::Lobby(ready_states) => {
-                if !ready_states.iter().all(|(_, ready)| *ready) {
+        match &mut self.state {
+            GameStatus::Lobby(ready_count) => {
+                *ready_count += 1;
+                if *ready_count as usize != self.players.len() {
                     return ServerMessage::ServerAck;
                 }
-                ServerMessage::GameStartAt(
-                    (std::time::UNIX_EPOCH.elapsed().unwrap() + std::time::Duration::from_secs(5))
-                        .as_millis(),
-                )
+                // announce game start
+                static START_TIMEOUT: Duration = Duration::from_secs(12);
+                self.broadcast_message(ServerMessage::GameStartAt(
+                    (std::time::UNIX_EPOCH
+                        .elapsed()
+                        .expect("system to provide elapsed UNIX time")
+                        + std::time::Duration::from_secs(5))
+                    .as_millis(),
+                ));
+
+                let game_id = self.id;
+                thread::spawn(move || {
+                    thread::sleep(START_TIMEOUT);
+                    if let Some(game) = GAMES.write().unwrap().get_mut(&game_id) {
+                        if let GameStatus::Lobby(ready_count) = &mut game.state {
+                            if (*ready_count as usize) < game.players.len() {
+                                return;
+                            }
+                        }
+                        game.start_game();
+                    }
+                })
             }
-            _ => ServerMessage::Error("cannot ready up: game is not in lobby state".into()),
+            _ => return ServerMessage::Error("cannot ready up: game is not in lobby state".into()),
+        };
+        ServerMessage::ServerAck
+    }
+
+    fn unready(&mut self, user: RwLockReadGuard<'_, User>) -> ServerMessage {
+        match &mut self.state {
+            GameStatus::Lobby(ready_count) => {
+                if *ready_count == 0 {
+                    return ServerMessage::Error("cannot unready: no one is ready".into());
+                }
+                *ready_count -= 1;
+                self.broadcast_message(ServerMessage::UserUnready(user.name.clone()));
+                ServerMessage::ServerAck
+            }
+            _ => ServerMessage::Error("cannot unready: game is not in lobby state".into()),
         }
-        // ServerMessage::ServerAck
+    }
+
+    fn start_game(&mut self) {
+        // self.state = GameStatus::Playing(Vec::new(), PlayPhase::SelectingSongs);
+        self.set_state(GameStatus::Playing(Vec::new(), PlayPhase::SelectingSongs));
+        self.broadcast_message(ServerMessage::GameStartSelect);
     }
 }
 
@@ -182,10 +230,12 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             leave_current();
             let mut games = GAMES.write().unwrap();
             match games.get_mut(&room_id) {
-                Some(game) => game.join_game(user.clone(), user_addr),
+                Some(game) => {
+                    game.join_game(user.clone(), user_addr);
+                    println!("joined room")
+                }
                 None => user_addr.do_send(ServerMessage::GameNotFound),
             };
-            println!("joined room")
         }
         UserAction::ReadyUp => {
             let user = user.read().unwrap();
@@ -200,8 +250,24 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 )),
             }
         }
+        UserAction::Unready => {
+            let user = user.read().unwrap();
+            match user.game_id {
+                Some(game_id) => {
+                    if let Some(game) = GAMES.write().unwrap().get_mut(&game_id) {
+                        user_addr.do_send(game.unready(user));
+                    }
+                }
+                None => user
+                    .ws
+                    .as_ref()
+                    .unwrap()
+                    .do_send(ServerMessage::Error("cannot unready: not in a game".into())),
+            }
+        }
         UserAction::LeaveGame => {
             leave_current();
+            // DEADLOCK:
             // if let Some(game_id) = user.read().unwrap().game_id {
             //     let mut games = GAMES.write().unwrap();
             //     if let Some(game) = games.get_mut(&game_id) {
