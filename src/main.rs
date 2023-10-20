@@ -132,6 +132,8 @@ async fn index(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, E
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    music_handler::start_instance_finder();
+
     HttpServer::new(|| App::new().service(index))
         .bind(("127.0.0.1", 8080))?
         .run()

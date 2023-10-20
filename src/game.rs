@@ -10,7 +10,7 @@ use once_cell::sync::Lazy;
 
 use crate::{
     model::{song::Song, user::User},
-    UserSocket,
+    UserSocket, music_handler,
 };
 
 static GAMES: Lazy<RwLock<HashMap<u16, Game>>> = Lazy::new(|| RwLock::new(HashMap::new()));
@@ -24,6 +24,7 @@ pub enum UserAction {
     ReadyUp,
     Unready,
     StartGame,
+    GetSuggestions(String),
     AddSong(String),
     StartGuessing,
     GuessSong(u8),
@@ -40,6 +41,7 @@ impl From<(&str, &str)> for UserAction {
             ("ready_up", _) => UserAction::ReadyUp,
             ("unready", _) => UserAction::Unready,
             ("start", _) => UserAction::StartGame,
+            ("suggest", query) => UserAction::GetSuggestions(query.to_string()),
             ("add", id) => UserAction::AddSong(id.to_string()),
             ("start_guessing", _) => UserAction::StartGuessing,
             ("guess", idx) => UserAction::GuessSong(idx.parse().unwrap_or(0)),
@@ -275,6 +277,12 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             //     }
             // }
         }
+        UserAction::GetSuggestions(query) => {
+            user_addr.do_send(match music_handler::get_suggestions(&query) {
+                Ok(songs) => ServerMessage::Suggestion(songs),
+                Err(err) => ServerMessage::Error(err.to_string()),
+            });
+        } 
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }
 }
