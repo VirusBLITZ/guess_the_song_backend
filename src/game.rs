@@ -10,7 +10,7 @@ use once_cell::sync::Lazy;
 
 use crate::{
     model::{song::Song, user::User},
-    UserSocket, music_handler,
+    music_handler, UserSocket,
 };
 
 static GAMES: Lazy<RwLock<HashMap<u16, Game>>> = Lazy::new(|| RwLock::new(HashMap::new()));
@@ -282,7 +282,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 Ok(songs) => ServerMessage::Suggestion(songs),
                 Err(err) => ServerMessage::Error(err.to_string()),
             });
-        } 
+        }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }
 }
