@@ -11,7 +11,8 @@ use actix::{Actor, ActorContext, AsyncContext, Handler, StreamHandler};
 use actix_web::{get, web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws::{self, CloseCode, CloseReason};
 use game::{ServerMessage, UserAction};
-use model::user::User;
+
+use model::{search_result::SearchResult, user::User};
 
 pub struct UserSocket {
     pub user: Arc<RwLock<User>>,
@@ -87,7 +88,13 @@ impl Handler<ServerMessage> for UserSocket {
             ServerMessage::GameStartSelect => "game_start_select".to_string(),
             ServerMessage::Suggestion(songs) => format!(
                 "suggestion {}",
-                dbg!(serde_json::to_string(&songs).unwrap())
+                serde_json::to_string(
+                    &songs
+                        .into_iter()
+                        .map(|s| SearchResult::from(s))
+                        .collect::<Vec<_>>()
+                )
+                .unwrap()
             ),
             // ServerMessage::GamePlayAudio
             _ => format!("{:?}", msg),

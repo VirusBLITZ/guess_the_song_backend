@@ -17,7 +17,8 @@ use serde::Deserialize;
 //     Lazy::new(|| RwLock::new(invidious::ClientSync::default()));
 
 const INSTANCE_COUNT: usize = 3;
-const INSTANCES_API_URI: &'static str = "https://api.invidious.io/instances.json?sort_by=health";
+// const INSTANCES_API_URI: &'static str = "https://api.invidious.io/instances.json?sort_by=health";
+const INSTANCES_API_URI: &'static str = "BACKUP_ONLY";
 const BACKUP_INSTANCES: [&str; 3] = [
     "yt.oelrichsgarcia.de",
     "invidious.einfachzocken.eu",
@@ -106,8 +107,11 @@ pub fn get_suggestions(query: &str) -> Result<Vec<invidious::hidden::SearchItem>
         format!("https://{}", INSTANCE_FINDER.get_instance()),
         MethodSync::HttpReq,
     );
-    println!("using instance: {}", client.get_instance());
-    let res = client.search(Some(format!("q=\"{}\"", query).as_str()));
-    println!("{:?}", res);
-    Ok(res?.items)
+    println!("using instance: {} for this query", client.get_instance());
+    Ok(client
+        .search(Some(format!("q=\"{}\"", query).as_str()))?
+        .items
+        .into_iter()
+        .take(6)
+        .collect::<Vec<_>>())
 }
