@@ -212,7 +212,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
 
     match action {
         UserAction::SetUsername(name) => {
-            user.write().unwrap().name = name.replace("\"", "");
+            user.write().unwrap().name = name.trim_matches('"').to_string();
             ack();
         }
         UserAction::NewGame => {
@@ -230,7 +230,8 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
         }
         UserAction::JoinGame(room_id) => {
             leave_current();
-            let mut games = GAMES.write().unwrap();
+            let mut games: std::sync::RwLockWriteGuard<'_, HashMap<u16, Game<'_>>> =
+                GAMES.write().unwrap();
             match games.get_mut(&room_id) {
                 Some(game) => {
                     game.join_game(user.clone(), user_addr);
@@ -283,6 +284,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 Err(err) => ServerMessage::Error(err.to_string()),
             });
         }
+        UserAction::AddSong(source_id) => {}
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }
 }

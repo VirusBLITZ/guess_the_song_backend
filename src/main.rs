@@ -87,7 +87,7 @@ impl Handler<ServerMessage> for UserSocket {
             ServerMessage::GameStartAt(time) => format!("game_start_at {}", time),
             ServerMessage::GameStartSelect => "game_start_select".to_string(),
             ServerMessage::Suggestion(songs) => format!(
-                "suggestion {}",
+                "suggestions {}",
                 serde_json::to_string(
                     &songs
                         .into_iter()
