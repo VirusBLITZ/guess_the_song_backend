@@ -77,7 +77,7 @@ impl Handler<ServerMessage> for UserSocket {
     fn handle(&mut self, msg: ServerMessage, ctx: &mut Self::Context) {
         ctx.text(match msg {
             ServerMessage::ServerAck => "k".to_string(),
-            ServerMessage::Error(msg) => format!("ERR \"{}\"", msg),
+            ServerMessage::Error(msg) => format!("ERR \"{:?}\"", msg),
             ServerMessage::GameCreated(id) => format!("game_created {}", id),
             ServerMessage::GameNotFound => "game_not_found".to_string(),
             ServerMessage::UserJoin(name) => format!("user_join \"{}\"", name),

@@ -284,7 +284,10 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 Err(err) => ServerMessage::Error(err.to_string()),
             });
         }
-        UserAction::AddSong(source_id) => {}
+        UserAction::AddSong(source_id) => {
+            let mut games = GAMES.write().unwrap();
+            music_handler::songs_from_id(source_id.as_str());
+        }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }
 }

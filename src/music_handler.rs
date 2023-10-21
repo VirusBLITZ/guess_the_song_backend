@@ -7,11 +7,14 @@ use std::{
     },
     thread,
     time::Duration,
+    vec,
 };
 
 use invidious::{ClientSync, ClientSyncTrait, InvidiousError, MethodSync};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
+
+use crate::model::song::Song;
 
 // static API_CLIENT: Lazy<RwLock<invidious::ClientSync>> =
 //     Lazy::new(|| RwLock::new(invidious::ClientSync::default()));
@@ -25,7 +28,7 @@ const INSTANCES_API_URI: &'static str = "https://api.invidious.io/instances.json
 const BACKUP_INSTANCES: [&str; 3] = [
     "yt.oelrichsgarcia.de",
     "invidious.einfachzocken.eu",
-    "yt.cdaut.de",
+    "iv.nboeck.de",
     // "inv.bp.projectsegfau.lt",
 ];
 static INSTANCE_FINDER: Lazy<InstanceFinder> =
@@ -114,9 +117,30 @@ pub fn get_suggestions(query: &str) -> Result<Vec<invidious::hidden::SearchItem>
 
     let query = query.trim_matches('"');
     Ok(client
-        .search(Some(format!("q=\"{}\"", query).as_str()))?
+        .search(Some(format!("q=\"{}\"", query.replace(" ", "+")).as_str()))?
         .items
         .into_iter()
         .take(6)
         .collect::<Vec<_>>())
+}
+
+pub fn songs_from_id(id: &str) -> Vec<Song> {
+    let mut client = ClientSync::default();
+    client.set_instance(INSTANCE_FINDER.get_instance());
+
+    // let client = ClientSync::with_method(
+    //     format!("https://{}", INSTANCE_FINDER.get_instance()),
+    //     MethodSync::Reqwest,
+    // );
+
+    let songs: Vec<Song> = vec![];
+    match id.get(0..2) {
+        Some(start) => match start {
+            "UC" => println!("channel"),
+            "PL" => println!("playlist"),
+            _ => println!("video"),
+        },
+        None => println!("no id"),
+    };
+    songs
 }
