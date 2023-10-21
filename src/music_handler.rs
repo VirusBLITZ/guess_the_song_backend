@@ -17,8 +17,11 @@ use serde::Deserialize;
 //     Lazy::new(|| RwLock::new(invidious::ClientSync::default()));
 
 const INSTANCE_COUNT: usize = 3;
-// const INSTANCES_API_URI: &'static str = "https://api.invidious.io/instances.json?sort_by=health";
-const INSTANCES_API_URI: &'static str = "BACKUP_ONLY";
+
+#[cfg(debug_assertions)]
+const INSTANCES_API_URI: &'static str = "NOT_THE_API";
+#[cfg(not(debug_assertions))]
+const INSTANCES_API_URI: &'static str = "https://api.invidious.io/instances.json?sort_by=health";
 const BACKUP_INSTANCES: [&str; 3] = [
     "yt.oelrichsgarcia.de",
     "invidious.einfachzocken.eu",
@@ -83,7 +86,7 @@ impl InstanceFinder {
                 }
             }
             Err(_) => {
-                eprintln!("Failed to fetch instances.json");
+                eprintln!("[UPDATER] couldn't get instances, using backup instances");
                 InstanceFinder::backup_instances()
             }
         };
@@ -108,6 +111,8 @@ pub fn get_suggestions(query: &str) -> Result<Vec<invidious::hidden::SearchItem>
         MethodSync::HttpReq,
     );
     println!("using instance: {} for this query", client.get_instance());
+
+    let query = query.trim_matches('"');
     Ok(client
         .search(Some(format!("q=\"{}\"", query).as_str()))?
         .items
