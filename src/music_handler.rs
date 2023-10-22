@@ -10,11 +10,17 @@ use std::{
     vec,
 };
 
-use invidious::{ClientSync, ClientSyncTrait, InvidiousError, MethodSync};
+use invidious::{
+    channel::Channel,
+    hidden::{AdaptiveFormat, FormatStream},
+    video::Video,
+    ClientSync, ClientSyncTrait, CommonVideo, InvidiousError, MethodSync,
+};
 use once_cell::sync::Lazy;
+use rand::seq::IteratorRandom;
 use serde::Deserialize;
 
-use crate::model::song::Song;
+use crate::model::song::{self, GettingSongError, Song};
 
 // static API_CLIENT: Lazy<RwLock<invidious::ClientSync>> =
 //     Lazy::new(|| RwLock::new(invidious::ClientSync::default()));
@@ -104,15 +110,12 @@ pub fn start_instance_finder() {
     println!("[MUSIC] starting instance updater");
     thread::spawn(|| loop {
         INSTANCE_FINDER.update_instances();
-        thread::sleep(Duration::from_secs(60 * 10));
+        thread::sleep(Duration::from_secs(60 * 480)); // 8 hours
     });
 }
 
 pub fn get_suggestions(query: &str) -> Result<Vec<invidious::hidden::SearchItem>, InvidiousError> {
-    let client = ClientSync::with_method(
-        format!("https://{}", INSTANCE_FINDER.get_instance()),
-        MethodSync::HttpReq,
-    );
+    let client = get_client();
     println!("using instance: {} for this query", client.get_instance());
 
     let query = query.trim_matches('"');
@@ -124,23 +127,87 @@ pub fn get_suggestions(query: &str) -> Result<Vec<invidious::hidden::SearchItem>
         .collect::<Vec<_>>())
 }
 
-pub fn songs_from_id(id: &str) -> Vec<Song> {
-    let mut client = ClientSync::default();
-    client.set_instance(INSTANCE_FINDER.get_instance());
+fn get_client() -> ClientSync {
+    ClientSync::with_method(
+        format!("https://{}", INSTANCE_FINDER.get_instance()),
+        MethodSync::HttpReq,
+    )
+}
 
-    // let client = ClientSync::with_method(
-    //     format!("https://{}", INSTANCE_FINDER.get_instance()),
-    //     MethodSync::Reqwest,
-    // );
+trait SongSource {
+    fn try_get_songs(&self) -> Result<Vec<Song>, GettingSongError>;
+}
+
+// impl SongSource for invidious::video::Video {}
+
+impl SongSource for Video {
+    fn try_get_songs(&self) -> Result<Vec<Song>, GettingSongError> {
+        let mut fmts: Vec<_> = self
+            .adaptive_formats
+            .into_iter()
+            .filter(|s| s.r#type.starts_with("audio"))
+            .collect();
+        fmts.sort_by(|a, b| b.bitrate.cmp(&a.bitrate));
+        fmts.drain(1..);
+        let song = Song::try_from((self.id, self.title, self.author, fmts[1]))?;
+        Ok(vec![song])
+    }
+}
+
+fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSongError> {
+    let mut songs = vec![];
+    let (tx, rx) = std::sync::mpsc::channel::<Result<Song, GettingSongError>>();
+
+    for video in vids
+        .into_iter()
+        .take(30)
+        .choose_multiple(&mut rand::thread_rng(), 5)
+    {
+        let tx = tx.clone();
+        let client = get_client();
+        thread::spawn(move || {
+            let vid_res = client.video(&video.id, None);
+            let song = match vid_res {
+                Ok(vid) => vid.try_get_songs(),
+                Err(e) => Err(e),
+            }
+            tx.send(song);
+        });
+    }
+
+    for _ in 0..5 {
+        songs.push(rx.recv().unwrap()?);
+    }
+    Ok(songs)
+}
+
+impl SongSource for Channel {
+    fn try_get_songs(&self) -> Result<Vec<Song>, GettingSongError> {
+        // load channel videos
+        // get first 30 most popular videos
+        // select 5 random videos from those
+        // get songs from those videos
+        let client = get_client();
+
+        let videos = client
+            .channel_videos(&self.id, Some("sort_by=popular"))?
+            .videos;
+
+        Ok(songs)
+    }
+}
+
+pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
+    let client = get_client();
 
     let songs: Vec<Song> = vec![];
     match id.get(0..2) {
-        Some(start) => match start {
-            "UC" => println!("channel"),
+        Some(start) => songs.extend(match start {
+            "UC" => client.channel(id, None)?.try_get_songs()?,
             "PL" => println!("playlist"),
-            _ => println!("video"),
-        },
+            _ => client.video(id, None)?.try_get_songs()?,
+        }),
         None => println!("no id"),
     };
-    songs
+    Ok(songs)
 }

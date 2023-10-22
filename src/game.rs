@@ -285,8 +285,28 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             });
         }
         UserAction::AddSong(source_id) => {
-            let mut games = GAMES.write().unwrap();
-            music_handler::songs_from_id(source_id.as_str());
+            thread::spawn(|| {
+                let songs = music_handler::songs_from_id(source_id.as_str());
+                let mut games = GAMES.write().unwrap();
+                match user.read().unwrap().game_id {
+                    Some(game_id) => {
+                        if let Some(game) = games.get_mut(&game_id) {
+                            match game.state {
+                                GameStatus::Playing(mut songs, PlayPhase::SelectingSongs) => {
+                                    songs.extend(songs);
+                                }
+                                _ => user_addr.do_send(ServerMessage::Error(
+                                    "cannot add song(s): game is not in song selection state".into(),
+                                )),
+                            }
+                        }
+                    }
+                    None => user_addr.do_send(ServerMessage::Error(
+                        "cannot add song(s): not in a game".into(),
+                    )),
+                };
+            });
+            ack();
         }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }

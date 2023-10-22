@@ -70,7 +70,6 @@ impl Actor for UserSocket {
         actix::Running::Stop
     }
 }
-
 impl Handler<ServerMessage> for UserSocket {
     type Result = ();
 
