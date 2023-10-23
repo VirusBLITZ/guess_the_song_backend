@@ -2,6 +2,7 @@ use std::string::String;
 
 use invidious::{hidden::AdaptiveFormat, CommonVideo};
 
+#[derive(Debug)]
 pub struct GettingSongError {
     reqwest_err: Option<reqwest::Error>,
     invidious_err: Option<invidious::InvidiousError>,
