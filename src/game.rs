@@ -285,13 +285,15 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             });
         }
         UserAction::AddSong(source_id) => {
-            thread::spawn(|| {
+            let user_addr = user_addr.clone();
+            thread::spawn(move || {
                 let songs = music_handler::songs_from_id(source_id.as_str());
                 let mut games = GAMES.write().unwrap();
-                match user.read().unwrap().game_id {
+                let game_id = user.read().unwrap().game_id;
+                match game_id {
                     Some(game_id) => {
-                        if let Some(game) = games.get_mut(&game_id) {
-                            match game.state {
+                        match games.get_mut(&game_id) {
+                            Some(game) => match &game.state {
                                 GameStatus::Playing(mut songs, PlayPhase::SelectingSongs) => {
                                     songs.extend(songs);
                                 }
@@ -299,6 +301,9 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                                     "cannot add song(s): game is not in song selection state".into(),
                                 )),
                             }
+                            None => user_addr.do_send(ServerMessage::Error(
+                                "cannot add song(s): the game you're in doesn't exist".into(),
+                            )),
                         }
                     }
                     None => user_addr.do_send(ServerMessage::Error(

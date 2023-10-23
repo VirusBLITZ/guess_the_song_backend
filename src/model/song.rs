@@ -25,7 +25,6 @@ impl From<invidious::InvidiousError> for GettingSongError {
     }
 }
 
-
 #[derive(Clone, Debug)]
 pub struct Song {
     id: String,
@@ -40,9 +39,11 @@ pub type Author = String;
 impl TryFrom<(SongId, SongTitle, Author, AdaptiveFormat)> for Song {
     type Error = reqwest::Error;
     /// Downloads the song from the given adaptive format
-    fn try_from(song_info: (SongId, SongTitle, Author, AdaptiveFormat)) -> Result<Self, Self::Error> {
+    fn try_from(
+        song_info: (SongId, SongTitle, Author, AdaptiveFormat),
+    ) -> Result<Self, Self::Error> {
         let (id, title, author, format) = song_info;
-        let bytes = reqwest::blocking::get(format.url.as_str())?.bytes()?;   // TODO: stream while playing
+        let bytes = reqwest::blocking::get(format.url.as_str())?.bytes()?; // TODO: stream while playing
         Ok(Self {
             id,
             name: title,

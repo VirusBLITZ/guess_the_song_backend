@@ -135,13 +135,13 @@ fn get_client() -> ClientSync {
 }
 
 trait SongSource {
-    fn try_get_songs(&self) -> Result<Vec<Song>, GettingSongError>;
+    fn try_get_songs(self) -> Result<Vec<Song>, GettingSongError>;
 }
 
 // impl SongSource for invidious::video::Video {}
 
 impl SongSource for Video {
-    fn try_get_songs(&self) -> Result<Vec<Song>, GettingSongError> {
+    fn try_get_songs(self) -> Result<Vec<Song>, GettingSongError> {
         let mut fmts: Vec<_> = self
             .adaptive_formats
             .into_iter()
@@ -149,14 +149,19 @@ impl SongSource for Video {
             .collect();
         fmts.sort_by(|a, b| b.bitrate.cmp(&a.bitrate));
         fmts.drain(1..);
-        let song = Song::try_from((self.id, self.title, self.author, fmts[1]))?;
+        let song = Song::try_from((
+            self.id,
+            self.title,
+            self.author,
+            fmts.into_iter().next().unwrap(),
+        ))?;
         Ok(vec![song])
     }
 }
 
 fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSongError> {
     let mut songs = vec![];
-    let (tx, rx) = std::sync::mpsc::channel::<Result<Song, GettingSongError>>();
+    let (tx, rx) = std::sync::mpsc::channel::<Option<Song>>();
 
     for video in vids
         .into_iter()
@@ -168,21 +173,26 @@ fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSo
         thread::spawn(move || {
             let vid_res = client.video(&video.id, None);
             let song = match vid_res {
-                Ok(vid) => vid.try_get_songs(),
-                Err(e) => Err(e),
-            }
+                Ok(vid) => match vid.try_get_songs() {
+                    Ok(song) => Some(song.into_iter().next().unwrap()),
+                    Err(_) => None,
+                },
+                Err(_) => None,
+            };
             tx.send(song);
         });
     }
 
     for _ in 0..5 {
-        songs.push(rx.recv().unwrap()?);
+        if let Some(song) = rx.recv().unwrap() {
+            songs.push(song);
+        }
     }
     Ok(songs)
 }
 
 impl SongSource for Channel {
-    fn try_get_songs(&self) -> Result<Vec<Song>, GettingSongError> {
+    fn try_get_songs(self) -> Result<Vec<Song>, GettingSongError> {
         // load channel videos
         // get first 30 most popular videos
         // select 5 random videos from those
@@ -193,18 +203,18 @@ impl SongSource for Channel {
             .channel_videos(&self.id, Some("sort_by=popular"))?
             .videos;
 
-        Ok(songs)
+        Ok(songs_from_common_vids(videos)?)
     }
 }
 
 pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
     let client = get_client();
 
-    let songs: Vec<Song> = vec![];
+    let mut songs: Vec<Song> = vec![];
     match id.get(0..2) {
         Some(start) => songs.extend(match start {
             "UC" => client.channel(id, None)?.try_get_songs()?,
-            "PL" => println!("playlist"),
+            // "PL" => println!("playlist"),
             _ => client.video(id, None)?.try_get_songs()?,
         }),
         None => println!("no id"),
