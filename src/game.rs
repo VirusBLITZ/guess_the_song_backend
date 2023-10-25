@@ -144,12 +144,15 @@ impl Game<'_> {
                     return ServerMessage::ServerAck;
                 }
                 // announce game start
+                #[cfg(debug_assertions)]
+                static START_TIMEOUT: Duration = Duration::from_secs(2);
+                #[cfg(not(debug_assertions))]
                 static START_TIMEOUT: Duration = Duration::from_secs(12);
                 self.broadcast_message(ServerMessage::GameStartAt(
                     (std::time::UNIX_EPOCH
                         .elapsed()
                         .expect("system to provide elapsed UNIX time")
-                        + std::time::Duration::from_secs(5))
+                        + START_TIMEOUT)
                     .as_millis(),
                 ));
 
