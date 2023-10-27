@@ -135,13 +135,13 @@ fn get_client() -> ClientSync {
 }
 
 trait SongSource {
-    fn try_get_songs(self) -> Result<Vec<Song>, GettingSongError>;
+    fn try_get_songs(self, instance_url: String) -> Result<Vec<Song>, GettingSongError>;
 }
 
 // impl SongSource for invidious::video::Video {}
 
 impl SongSource for Video {
-    fn try_get_songs(self) -> Result<Vec<Song>, GettingSongError> {
+    fn try_get_songs(self, instance_url: String) -> Result<Vec<Song>, GettingSongError> {
         let mut fmts: Vec<_> = self
             .adaptive_formats
             .into_iter()
@@ -154,6 +154,7 @@ impl SongSource for Video {
             self.title,
             self.author,
             fmts.into_iter().next().unwrap(),
+            instance_url,
         ))?;
         Ok(vec![song])
     }
@@ -173,13 +174,13 @@ fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSo
         thread::spawn(move || {
             let vid_res = client.video(&video.id, None);
             let song = match vid_res {
-                Ok(vid) => match vid.try_get_songs() {
+                Ok(vid) => match vid.try_get_songs(client.instance) {
                     Ok(song) => Some(song.into_iter().next().unwrap()),
                     Err(_) => None,
                 },
-                Err(_) => None,
+                _ => None,
             };
-            tx.send(song);
+            tx.send(song).unwrap();
         });
     }
 
@@ -192,7 +193,7 @@ fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSo
 }
 
 impl SongSource for Channel {
-    fn try_get_songs(self) -> Result<Vec<Song>, GettingSongError> {
+    fn try_get_songs(self, instance_url: String) -> Result<Vec<Song>, GettingSongError> {
         // load channel videos
         // get first 30 most popular videos
         // select 5 random videos from those
@@ -213,9 +214,9 @@ pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
     let mut songs: Vec<Song> = vec![];
     match id.get(0..2) {
         Some(start) => songs.extend(match start {
-            "UC" => client.channel(id, None)?.try_get_songs()?,
+            "UC" => client.channel(id, None)?.try_get_songs(client.instance)?,
             // "PL" => println!("playlist"),
-            _ => client.video(id, None)?.try_get_songs()?,
+            _ => client.video(id, None)?.try_get_songs(client.instance)?,
         }),
         None => println!("no id"),
     };

@@ -2,6 +2,8 @@ use std::string::String;
 
 use invidious::{hidden::AdaptiveFormat, CommonVideo};
 
+use crate::music_handler;
+
 #[derive(Debug)]
 pub struct GettingSongError {
     reqwest_err: Option<reqwest::Error>,
@@ -37,14 +39,28 @@ pub struct Song {
 pub type SongTitle = String;
 pub type SongId = String;
 pub type Author = String;
-impl TryFrom<(SongId, SongTitle, Author, AdaptiveFormat)> for Song {
+pub type InstanceUrl = String;
+impl TryFrom<(SongId, SongTitle, Author, AdaptiveFormat, InstanceUrl)> for Song {
     type Error = reqwest::Error;
     /// Downloads the song from the given adaptive format
     fn try_from(
-        song_info: (SongId, SongTitle, Author, AdaptiveFormat),
+        song_info: (SongId, SongTitle, Author, AdaptiveFormat, InstanceUrl),
     ) -> Result<Self, Self::Error> {
-        let (id, title, author, format) = song_info;
-        let bytes = reqwest::blocking::get(format.url.as_str())?.bytes()?; // TODO: stream while playing
+        let (id, title, author, format, instance) = song_info;
+        let mut bytes = reqwest::blocking::get(format.url.as_str())?.bytes()?; // TODO: stream while playing
+        if bytes.len() == 0 {
+            // proxy video through instance
+            println!("proxying video through instance");
+            bytes = reqwest::blocking::get(dbg!(format!(
+                "{}/latest_version?id={}&itag={}&local=true",
+                instance, id, format.itag
+            )))?
+            .bytes()?
+        }
+
+        dbg!(bytes.len());
+        dbg!(&bytes);
+
         Ok(Self {
             id,
             name: title,

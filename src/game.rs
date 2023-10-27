@@ -153,7 +153,7 @@ impl Game<'_> {
                         .elapsed()
                         .expect("system to provide elapsed UNIX time")
                         + START_TIMEOUT)
-                    .as_millis(),
+                        .as_millis(),
                 ));
 
                 let game_id = self.id;
@@ -290,45 +290,47 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
         UserAction::AddSong(source_id) => {
             let user_addr = user_addr.clone();
             thread::spawn(move || {
-                let songs = music_handler::songs_from_id(source_id.as_str());
-                if let Err(err) = songs {
-                    user_addr.do_send(ServerMessage::Error(format!("{:?}", err)));
-                    return;
-                }
-                let songs = songs.unwrap();
-                let mut games = GAMES.write().unwrap();
+                let songs = music_handler::songs_from_id(source_id.as_str()).unwrap();
+                // if let Err(err) = songs {
+                //     user_addr.do_send(ServerMessage::Error(format!("{:?}", err)));
+                //     return;
+                // }
+                // let songs = songs.unwrap();
                 let game_id = user.read().unwrap().game_id;
-                match game_id {
-                    Some(game_id) => {
-                        if let Some(game) = games.get_mut(&game_id) {
-                            match &mut game.state {
-                                GameStatus::Playing(game_songs, PlayPhase::SelectingSongs) => {
-                                    game_songs.extend(dbg!(songs));
+                {
+                    let mut games = GAMES.write().unwrap();
+                    match game_id {
+                        Some(game_id) => {
+                            if let Some(game) = games.get_mut(&game_id) {
+                                match &mut game.state {
+                                    GameStatus::Playing(game_songs, PlayPhase::SelectingSongs) => {
+                                        game_songs.extend(dbg!(songs));
+                                    }
+                                    _ => user_addr.do_send(ServerMessage::Error(
+                                        "cannot add song(s): game is not in song selection state"
+                                            .into(),
+                                    )),
                                 }
-                                _ => user_addr.do_send(ServerMessage::Error(
-                                    "cannot add song(s): game is not in song selection state"
-                                        .into(),
-                                )),
                             }
+
+                            // match games.get_mut(&game_id) {
+                            // Some(game) => match game.state.as_ref() {
+                            //     GameStatus::Playing(mut songs, PlayPhase::SelectingSongs) => {
+                            //         songs.extend(songs);
+                            //     }
+                            //     _ => user_addr.do_send(ServerMessage::Error(
+                            //         "cannot add song(s): game is not in song selection state".into(),
+                            //     )),
+                            // }
+                            // None => user_addr.do_send(ServerMessage::Error(
+                            //     "cannot add song(s): the game you're in doesn't exist".into(),
+                            // )),
                         }
 
-                        // match games.get_mut(&game_id) {
-                        // Some(game) => match game.state.as_ref() {
-                        //     GameStatus::Playing(mut songs, PlayPhase::SelectingSongs) => {
-                        //         songs.extend(songs);
-                        //     }
-                        //     _ => user_addr.do_send(ServerMessage::Error(
-                        //         "cannot add song(s): game is not in song selection state".into(),
-                        //     )),
-                        // }
-                        // None => user_addr.do_send(ServerMessage::Error(
-                        //     "cannot add song(s): the game you're in doesn't exist".into(),
-                        // )),
+                        None => user_addr.do_send(ServerMessage::Error(
+                            "cannot add song(s): not in a game".into(),
+                        )),
                     }
-
-                    None => user_addr.do_send(ServerMessage::Error(
-                        "cannot add song(s): not in a game".into(),
-                    )),
                 };
             });
             ack();
