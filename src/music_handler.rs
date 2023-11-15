@@ -1,6 +1,7 @@
 // const API_CLIENT: invidious::
 
 use std::{
+    process,
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
         RwLock,
@@ -211,14 +212,11 @@ impl SongSource for Channel {
 pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
     let client = get_client();
 
-    let mut songs: Vec<Song> = vec![];
-    match id.get(0..2) {
-        Some(start) => songs.extend(match start {
-            "UC" => client.channel(id, None)?.try_get_songs(client.instance)?,
-            // "PL" => println!("playlist"),
-            _ => client.video(id, None)?.try_get_songs(client.instance)?,
-        }),
-        None => println!("no id"),
-    };
-    Ok(songs)
+    let cwd = std::env::current_dir().unwrap();
+    cwd.push("songs_cache");
+    let handle = process::Command::new("yt-dlp")
+        .current_dir(cwd.to_str().unwrap())
+        .args(["-f", "bestaudio[acodec=opus]", id])
+        .spawn();
+    
 }
