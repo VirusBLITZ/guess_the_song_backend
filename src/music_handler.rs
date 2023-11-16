@@ -1,6 +1,8 @@
 // const API_CLIENT: invidious::
 
 use std::{
+    fs,
+    io::{self, Read},
     process,
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
@@ -210,13 +212,40 @@ impl SongSource for Channel {
 }
 
 pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
-    let client = get_client();
+    let mut songs_dir = std::env::current_dir().unwrap();
+    songs_dir.push("songs_cache");
 
-    let cwd = std::env::current_dir().unwrap();
-    cwd.push("songs_cache");
-    let handle = process::Command::new("yt-dlp")
-        .current_dir(cwd.to_str().unwrap())
-        .args(["-f", "bestaudio[acodec=opus]", id])
-        .spawn();
-    
+    if !songs_dir.exists() {
+        fs::create_dir(&songs_dir).unwrap();
+    }
+
+    let mut handle = process::Command::new("yt-dlp")
+        .current_dir(songs_dir.to_str().unwrap())
+        .args(["-f", "bestaudio[acodec=opus]", "--max-filesize", "25k" ,id])
+        .spawn()
+        .expect("spawning yt-dlp to work");
+
+    #[cfg(debug_assertions)]
+    let output = handle.wait_with_output();
+    #[cfg(not(debug_assertions))]
+    let output = handle.wait();
+    match output {
+        Ok(_) => {
+            let entry = fs::read_dir(songs_dir)
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.unwrap())
+                .find(|entry| entry.file_name().to_string_lossy().contains(id))
+                .unwrap();
+            let mut bytes = vec![];
+            let mut file = fs::File::open(entry.path()).unwrap();
+            file.read_to_end(&mut bytes).unwrap();
+            println!("yt-dlp download successful, filename: {}", entry.file_name().to_string_lossy());
+            // Ok(vec![Song::from_bytes(bytes)])
+        }
+        Err(e) => {
+            eprintln!("yt-dlp download failed: {}", e);
+        }
+    };
+    Ok(vec![])
 }
