@@ -221,7 +221,7 @@ pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
 
     let mut handle = process::Command::new("yt-dlp")
         .current_dir(songs_dir.to_str().unwrap())
-        .args(["-f", "bestaudio[acodec=opus]", "--max-filesize", "25k" ,id])
+        .args(["-f", "bestaudio[acodec=opus]", "--max-filesize", "5000k" ,id])
         .spawn()
         .expect("spawning yt-dlp to work");
 
