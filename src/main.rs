@@ -140,7 +140,7 @@ async fn index(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, E
 async fn main() -> std::io::Result<()> {
     music_handler::start_instance_finder();
 
-    HttpServer::new(|| App::new().service(index))
+    HttpServer::new(|| App::new().service(index).service(actix_files::Files::new("/songs", "./songs_cache")))
         .bind(("127.0.0.1", 8080))?
         .run()
         .await
