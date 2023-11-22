@@ -79,7 +79,7 @@ pub enum GameStatus<'a> {
 #[derive(Clone, Debug)]
 pub enum PlayPhase<'a> {
     SelectingSongs,
-    GuessingSongs(Vec<&'a User>),
+    GuessingSongs(Vec<&'a User>),  // leaderboard
 }
 
 #[derive(Clone)]
