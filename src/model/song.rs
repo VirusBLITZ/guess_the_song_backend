@@ -9,6 +9,7 @@ pub enum GettingSongError {
     ReqwestErr(reqwest::Error),
     InvidiousErr(invidious::InvidiousError),
     DownloadFailed(std::io::Error),
+    OtherError
 }
 
 impl From<reqwest::Error> for GettingSongError {
@@ -25,13 +26,7 @@ impl From<invidious::InvidiousError> for GettingSongError {
 
 #[derive(Clone, Debug)]
 pub struct Song {
-    id: String,
-    name: String,
-    artist: String,
-    bytes: Vec<u8>,
+    pub id: String,
+    pub title: String,
+    pub artist: String,
 }
-
-pub type SongTitle = String;
-pub type SongId = String;
-pub type Author = String;
-pub type InstanceUrl = String;

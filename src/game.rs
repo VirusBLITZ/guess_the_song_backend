@@ -290,7 +290,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
         UserAction::AddSong(source_id) => {
             let user_addr = user_addr.clone();
             thread::spawn(move || {
-                let songs = music_handler::songs_from_id(source_id.as_str()).unwrap();
+                let songs = music_handler::song(source_id.as_str()).unwrap();
                 // if let Err(err) = songs {
                 //     user_addr.do_send(ServerMessage::Error(format!("{:?}", err)));
                 //     return;
