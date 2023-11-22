@@ -1,6 +1,7 @@
 // const API_CLIENT: invidious::
 
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, Read},
     process,
@@ -15,7 +16,7 @@ use std::{
 
 use invidious::{
     channel::Channel,
-    hidden::{AdaptiveFormat, FormatStream},
+    hidden::{AdaptiveFormat, FormatStream, SearchItem},
     video::Video,
     ClientSync, ClientSyncTrait, CommonVideo, InvidiousError, MethodSync,
 };
@@ -81,7 +82,7 @@ impl InstanceFinder {
     fn update_instances(&self) {
         let best_instances = match reqwest::blocking::get(INSTANCES_API_URI) {
             Ok(res) => {
-                // dbg!(res.text());
+                dbg!(res.text());
                 match res.json::<Vec<(String, Skip)>>() {
                     Ok(instances) => {
                         let mut uris: Vec<String> = Vec::with_capacity(INSTANCE_COUNT);
@@ -117,17 +118,28 @@ pub fn start_instance_finder() {
     });
 }
 
-pub fn get_suggestions(query: &str) -> Result<Vec<invidious::hidden::SearchItem>, InvidiousError> {
+static QUERY_CACHE: Lazy<RwLock<BTreeMap<&str, Vec<SearchItem>>>> =
+    Lazy::new(|| RwLock::new(BTreeMap::new()));
+pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
+    {
+        let cache_read = QUERY_CACHE.read().unwrap();
+        if let Some(items) = cache_read.get(query) {
+            return Ok(items.clone());
+        }
+    }
+
     let client = get_client();
     println!("using instance: {} for this query", client.get_instance());
 
     let query = query.trim_matches('"');
-    Ok(client
+    let results = client
         .search(Some(format!("q=\"{}\"", query.replace(" ", "+")).as_str()))?
         .items
         .into_iter()
         .take(6)
-        .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    QUERY_CACHE.write().unwrap().insert(query, results.clone());
+    Ok(results)
 }
 
 fn get_client() -> ClientSync {
@@ -142,26 +154,6 @@ trait SongSource {
 }
 
 // impl SongSource for invidious::video::Video {}
-
-impl SongSource for Video {
-    fn try_get_songs(self, instance_url: String) -> Result<Vec<Song>, GettingSongError> {
-        let mut fmts: Vec<_> = self
-            .adaptive_formats
-            .into_iter()
-            .filter(|s| s.r#type.starts_with("audio"))
-            .collect();
-        fmts.sort_by(|a, b| b.bitrate.cmp(&a.bitrate));
-        fmts.drain(1..);
-        let song = Song::try_from((
-            self.id,
-            self.title,
-            self.author,
-            fmts.into_iter().next().unwrap(),
-            instance_url,
-        ))?;
-        Ok(vec![song])
-    }
-}
 
 fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSongError> {
     let mut songs = vec![];
@@ -219,9 +211,17 @@ pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
         fs::create_dir(&songs_dir).unwrap();
     }
 
-    let mut handle = process::Command::new("yt-dlp")
+    let handle = process::Command::new("yt-dlp")
         .current_dir(songs_dir.to_str().unwrap())
-        .args(["-f", "bestaudio[acodec=opus]", "--max-filesize", "5000k", "-o", "%(id)s.%(ext)s" ,id])
+        .args([
+            "-f",
+            "bestaudio[acodec=opus]",
+            "--max-filesize",
+            "5000k",
+            "-o",
+            "%(id)s",
+            id,
+        ])
         .spawn()
         .expect("spawning yt-dlp to work");
 
@@ -240,11 +240,15 @@ pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
             let mut bytes = vec![];
             let mut file = fs::File::open(entry.path()).unwrap();
             file.read_to_end(&mut bytes).unwrap();
-            println!("yt-dlp download successful, filename: {}", entry.file_name().to_string_lossy());
+            println!(
+                "yt-dlp download successful, filename: {}",
+                entry.file_name().to_string_lossy()
+            );
             // Ok(vec![Song::from_bytes(bytes)])
         }
         Err(e) => {
             eprintln!("yt-dlp download failed: {}", e);
+            return Err(GettingSongError::DownloadFailed(e));
         }
     };
     Ok(vec![])
