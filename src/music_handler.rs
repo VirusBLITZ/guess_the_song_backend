@@ -4,9 +4,10 @@ use std::{
     collections::BTreeMap,
     fs,
     io::{self, Read},
-    process,
+    process::{self, Command},
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
+        mpsc::channel,
         RwLock,
     },
     thread,
@@ -18,7 +19,8 @@ use invidious::{
     channel::Channel,
     hidden::{AdaptiveFormat, FormatStream, SearchItem},
     video::Video,
-    ClientSync, ClientSyncTrait, CommonVideo, InvidiousError, MethodSync,
+    ClientSync, ClientSyncTrait, CommonChannel, CommonPlaylist, CommonVideo, InvidiousError,
+    MethodSync,
 };
 use once_cell::sync::Lazy;
 use rand::seq::IteratorRandom;
@@ -118,7 +120,36 @@ pub fn start_instance_finder() {
     });
 }
 
+/// multithreaded playlist resolver
+fn common_vids_from_id(id: &str) -> Result<Vec<CommonVideo>, GettingSongError> {
+    if id.starts_with("UC") {
+        return Ok(get_client().channel_videos(id, None)?.videos);
+    }
+    if !id.starts_with("PL") {
+        return Ok(vec![]);
+    };
+    let playlist = get_client().playlist(id, None)?;
+    let (tx, rx) = channel::<Option<CommonVideo>>();
+
+    playlist.videos.into_iter().for_each(|playlist_item| {
+        let tx = tx.clone();
+        thread::spawn(move || {
+            tx.send(match get_client().video(id, None) {
+                Ok(vid) => Some(vid.into()),
+                Err(_) => None,
+            })
+        });
+    });
+    let mut common_vids: Vec<CommonVideo> = vec![];
+    for _ in 0..playlist.video_count {
+        common_vids.push(rx.recv().unwrap().ok_or(GettingSongError::OtherError)?);
+    }
+    Ok(common_vids)
+}
+
 static QUERY_CACHE: Lazy<RwLock<BTreeMap<&str, Vec<SearchItem>>>> =
+    Lazy::new(|| RwLock::new(BTreeMap::new()));
+static ID_METADATA_CACHE: Lazy<RwLock<BTreeMap<String, CommonVideo>>> =
     Lazy::new(|| RwLock::new(BTreeMap::new()));
 pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
     {
@@ -139,6 +170,26 @@ pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
         .take(6)
         .collect::<Vec<_>>();
     QUERY_CACHE.write().unwrap().insert(query, results.clone());
+    {
+        let mut write_id_cache = ID_METADATA_CACHE.write().unwrap();
+
+        results.iter().for_each(|search_item: &SearchItem| {
+            match search_item {
+                SearchItem::Video(vd) => write_id_cache.insert(vd.id, vd.clone()),
+                _ => {
+                    let vids: Vec<CommonVideo> = match search_item {
+                        SearchItem::Playlist(c_pl) => c_pl.videos.into_iter().map(|playlist_vid| {
+                            CommonVideo::from(get_client().video(&playlist_vid.id, None))
+                        }),
+                        SearchItem::Channel(c_ch) => {
+                            get_client().channel_videos(&c_ch.id, Some("sort_by=popular"))
+                        }
+                        _ => panic!("unreachable state"),
+                    };
+                }
+            };
+        });
+    }
     Ok(results)
 }
 
@@ -168,14 +219,7 @@ fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSo
         let client = get_client();
         thread::spawn(move || {
             let vid_res = client.video(&video.id, None);
-            let song = match vid_res {
-                Ok(vid) => match vid.try_get_songs(client.instance) {
-                    Ok(song) => Some(song.into_iter().next().unwrap()),
-                    Err(_) => None,
-                },
-                _ => None,
-            };
-            tx.send(song).unwrap();
+            tx.send(download_song_from_id(&video.id).ok()).unwrap();
         });
     }
 
@@ -203,7 +247,7 @@ impl SongSource for Channel {
     }
 }
 
-pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
+pub fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
     let mut songs_dir = std::env::current_dir().unwrap();
     songs_dir.push("songs_cache");
 
@@ -231,25 +275,30 @@ pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
     let output = handle.wait();
     match output {
         Ok(_) => {
-            let entry = fs::read_dir(songs_dir)
-                .unwrap()
-                .into_iter()
-                .map(|entry| entry.unwrap())
-                .find(|entry| entry.file_name().to_string_lossy().contains(id))
-                .unwrap();
-            let mut bytes = vec![];
-            let mut file = fs::File::open(entry.path()).unwrap();
-            file.read_to_end(&mut bytes).unwrap();
-            println!(
-                "yt-dlp download successful, filename: {}",
-                entry.file_name().to_string_lossy()
-            );
-            // Ok(vec![Song::from_bytes(bytes)])
+            println!("yt-dlp download successful, filename: {}", id);
         }
         Err(e) => {
             eprintln!("yt-dlp download failed: {}", e);
             return Err(GettingSongError::DownloadFailed(e));
         }
     };
-    Ok(vec![])
+
+    let metadata = {
+        let read_metadata = ID_METADATA_CACHE.read().unwrap();
+        if let Some(metadata) = read_metadata.get(id) {
+            metadata.clone()
+        } else {
+            CommonVideo::from(
+                get_client()
+                    .video(id, None)
+                    .map_err(|e| GettingSongError::from(e))?,
+            )
+        }
+    };
+
+    Ok(Song {
+        id: id.to_owned(),
+        title: metadata.title,
+        artist: metadata.author,
+    })
 }
