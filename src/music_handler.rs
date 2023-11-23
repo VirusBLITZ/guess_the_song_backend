@@ -83,23 +83,20 @@ impl InstanceFinder {
     /// Select the healthiest instance from the list of instances and replace the current ones
     fn update_instances(&self) {
         let best_instances = match reqwest::blocking::get(INSTANCES_API_URI) {
-            Ok(res) => {
-                dbg!(res.text());
-                match res.json::<Vec<(String, Skip)>>() {
-                    Ok(instances) => {
-                        let mut uris: Vec<String> = Vec::with_capacity(INSTANCE_COUNT);
-                        instances
-                            .into_iter()
-                            .take(INSTANCE_COUNT)
-                            .for_each(|(uri, _)| uris.push(uri));
-                        uris
-                    }
-                    Err(_) => {
-                        eprintln!("Failed to parse instances.json");
-                        InstanceFinder::backup_instances()
-                    }
+            Ok(res) => match res.json::<Vec<(String, Skip)>>() {
+                Ok(instances) => {
+                    let mut uris: Vec<String> = Vec::with_capacity(INSTANCE_COUNT);
+                    instances
+                        .into_iter()
+                        .take(INSTANCE_COUNT)
+                        .for_each(|(uri, _)| uris.push(uri));
+                    uris
                 }
-            }
+                Err(_) => {
+                    eprintln!("Failed to parse instances.json");
+                    InstanceFinder::backup_instances()
+                }
+            },
             Err(_) => {
                 eprintln!("[UPDATER] couldn't get instances, using backup instances");
                 InstanceFinder::backup_instances()
@@ -134,7 +131,8 @@ fn common_vids_from_id(id: &str) -> Result<Vec<CommonVideo>, GettingSongError> {
     playlist.videos.into_iter().for_each(|playlist_item| {
         let tx = tx.clone();
         thread::spawn(move || {
-            tx.send(match get_client().video(id, None) {
+            // tx.send(Some(get_client().video(&playlist_item.id.as_str(), None).unwrap().into()))
+            tx.send(match get_client().video(&playlist_item.id, None) {
                 Ok(vid) => Some(vid.into()),
                 Err(_) => None,
             })
@@ -147,7 +145,7 @@ fn common_vids_from_id(id: &str) -> Result<Vec<CommonVideo>, GettingSongError> {
     Ok(common_vids)
 }
 
-static QUERY_CACHE: Lazy<RwLock<BTreeMap<&str, Vec<SearchItem>>>> =
+static QUERY_CACHE: Lazy<RwLock<BTreeMap<String, Vec<SearchItem>>>> =
     Lazy::new(|| RwLock::new(BTreeMap::new()));
 static ID_METADATA_CACHE: Lazy<RwLock<BTreeMap<String, CommonVideo>>> =
     Lazy::new(|| RwLock::new(BTreeMap::new()));
@@ -169,24 +167,19 @@ pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
         .into_iter()
         .take(6)
         .collect::<Vec<_>>();
-    QUERY_CACHE.write().unwrap().insert(query, results.clone());
+    QUERY_CACHE
+        .write()
+        .unwrap()
+        .insert(query.to_owned(), results.clone());
     {
         let mut write_id_cache = ID_METADATA_CACHE.write().unwrap();
 
         results.iter().for_each(|search_item: &SearchItem| {
             match search_item {
-                SearchItem::Video(vd) => write_id_cache.insert(vd.id, vd.clone()),
-                _ => {
-                    let vids: Vec<CommonVideo> = match search_item {
-                        SearchItem::Playlist(c_pl) => c_pl.videos.into_iter().map(|playlist_vid| {
-                            CommonVideo::from(get_client().video(&playlist_vid.id, None))
-                        }),
-                        SearchItem::Channel(c_ch) => {
-                            get_client().channel_videos(&c_ch.id, Some("sort_by=popular"))
-                        }
-                        _ => panic!("unreachable state"),
-                    };
+                SearchItem::Video(vd) => {
+                    write_id_cache.insert(vd.id.clone(), vd.clone());
                 }
+                _ => (), // channel & playlist° would need another request
             };
         });
     }
@@ -255,7 +248,7 @@ pub fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
         fs::create_dir(&songs_dir).unwrap();
     }
 
-    let handle = process::Command::new("yt-dlp")
+    let mut handle = process::Command::new("yt-dlp")
         .current_dir(songs_dir.to_str().unwrap())
         .args([
             "-f",
