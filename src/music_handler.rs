@@ -254,7 +254,7 @@ pub fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
             "-f",
             "bestaudio[acodec=opus]",
             "--max-filesize",
-            "5000k",
+            "6000k",
             "-o",
             "%(id)s",
             id,
