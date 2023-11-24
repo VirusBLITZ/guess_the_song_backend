@@ -292,33 +292,36 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             thread::spawn(move || {
                 let mut games = GAMES.write().unwrap();
                 let user = user.read().unwrap();
-                if let Some(game_id) = user.game_id {
-                    let game = games.get_mut(&game_id).unwrap();
-                    match &mut game.state {
-                        GameStatus::Playing(songs, PlayPhase::SelectingSongs) => {
-                            match music_handler::download_song_from_id(&source_id) {
-                                Ok(song) => {
-                                    songs.push(song);
-                                    game.broadcast_message(ServerMessage::ServerAck);
-                                }
-                                Err(err) => {
-                                    user.ws
-                                        .as_ref()
-                                        .unwrap()
-                                        .do_send(ServerMessage::Error(format!("{:#?}", err)));
+                match user.game_id {
+                    Some(game_id) => {
+                        let game = games.get_mut(&game_id).unwrap();
+                        match &mut game.state {
+                            GameStatus::Playing(songs, PlayPhase::SelectingSongs) => {
+                                match music_handler::download_song_from_id(&source_id) {
+                                    Ok(song) => {
+                                        songs.push(song);
+                                        game.broadcast_message(ServerMessage::ServerAck);
+                                    }
+                                    Err(err) => {
+                                        user.ws
+                                            .as_ref()
+                                            .unwrap()
+                                            .do_send(ServerMessage::Error(format!("{:#?}", err)));
+                                    }
                                 }
                             }
-                        }
-                        _ =>  {user.ws.as_ref().unwrap().do_send(ServerMessage::Error(
-                                "cannot add song: game is not in song selection state".into(),
-                            ));
-                        }
-                    };
-                    
-                } else {
-                    user.ws.as_ref().unwrap().do_send(ServerMessage::Error(
-                        "cannot add song: not in a game".into(),
-                    ));
+                            _ => {
+                                user.ws.as_ref().unwrap().do_send(ServerMessage::Error(
+                                    "cannot add song: game is not in song selection state".into(),
+                                ));
+                            }
+                        };
+                    }
+                    None => {
+                        user.ws.as_ref().unwrap().do_send(ServerMessage::Error(
+                            "cannot add song: not in a game".into(),
+                        ));
+                    }
                 }
             });
             ack();
