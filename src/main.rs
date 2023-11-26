@@ -26,7 +26,6 @@ impl UserSocket {
             user: Arc::new(RwLock::new(User {
                 id: rand::random(),
                 name: "User ".to_string() + rand::random::<u8>().to_string().as_str(),
-                score: 0,
                 game_id: None,
                 ws: None,
             })),
@@ -136,6 +135,8 @@ async fn index(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, E
     resp
 }
 
+const SONGS_ROUTE: &str = "/songs";
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     music_handler::start_instance_finder();
@@ -143,7 +144,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .service(index)
-            .service(actix_files::Files::new("/songs", "./songs_cache"))
+            .service(actix_files::Files::new(SONGS_ROUTE, "./songs_cache"))
     })
     .bind(("127.0.0.1", 8080))?
     .run()
