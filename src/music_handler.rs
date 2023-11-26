@@ -3,7 +3,6 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::{self, Read},
     process::{self, Command},
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
@@ -12,14 +11,10 @@ use std::{
     },
     thread,
     time::Duration,
-    vec,
 };
 
 use invidious::{
-    channel::Channel,
-    hidden::{AdaptiveFormat, FormatStream, SearchItem},
-    video::Video,
-    ClientSync, ClientSyncTrait, CommonChannel, CommonPlaylist, CommonVideo, InvidiousError,
+    channel::Channel, hidden::SearchItem, ClientSync, ClientSyncTrait, CommonVideo, InvidiousError,
     MethodSync,
 };
 use once_cell::sync::Lazy;
@@ -120,7 +115,9 @@ pub fn start_instance_finder() {
 /// multithreaded playlist resolver
 fn common_vids_from_id(id: &str) -> Result<Vec<CommonVideo>, GettingSongError> {
     if id.starts_with("UC") {
-        return Ok(get_client().channel_videos(id, None)?.videos);
+        return Ok(get_client()
+            .channel_videos(id, Some("sort_by=popular"))?
+            .videos);
     }
     if !id.starts_with("PL") {
         return Ok(vec![]);
@@ -179,7 +176,7 @@ pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
                 SearchItem::Video(vd) => {
                     write_id_cache.insert(vd.id.clone(), vd.clone());
                 }
-                _ => (), // channel & playlist° would need another request
+                _ => (), // channel & playlist would need another request
             };
         });
     }
@@ -193,12 +190,6 @@ fn get_client() -> ClientSync {
     )
 }
 
-trait SongSource {
-    fn try_get_songs(self, instance_url: String) -> Result<Vec<Song>, GettingSongError>;
-}
-
-// impl SongSource for invidious::video::Video {}
-
 fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSongError> {
     let mut songs = vec![];
     let (tx, rx) = std::sync::mpsc::channel::<Option<Song>>();
@@ -209,9 +200,7 @@ fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSo
         .choose_multiple(&mut rand::thread_rng(), 5)
     {
         let tx = tx.clone();
-        let client = get_client();
         thread::spawn(move || {
-            let vid_res = client.video(&video.id, None);
             tx.send(download_song_from_id(&video.id).ok()).unwrap();
         });
     }
@@ -224,23 +213,7 @@ fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSo
     Ok(songs)
 }
 
-impl SongSource for Channel {
-    fn try_get_songs(self, instance_url: String) -> Result<Vec<Song>, GettingSongError> {
-        // load channel videos
-        // get first 30 most popular videos
-        // select 5 random videos from those
-        // get songs from those videos
-        let client = get_client();
-
-        let videos = client
-            .channel_videos(&self.id, Some("sort_by=popular"))?
-            .videos;
-
-        Ok(songs_from_common_vids(videos)?)
-    }
-}
-
-pub fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
+fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
     let mut songs_dir = std::env::current_dir().unwrap();
     songs_dir.push("songs_cache");
 
@@ -248,50 +221,75 @@ pub fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
         fs::create_dir(&songs_dir).unwrap();
     }
 
-    let mut handle = process::Command::new("yt-dlp")
-        .current_dir(songs_dir.to_str().unwrap())
-        .args([
-            "-f",
-            "bestaudio[acodec=opus]",
-            "--max-filesize",
-            "6000k",
-            "-o",
-            "%(id)s",
-            id,
-        ])
-        .spawn()
-        .expect("spawning yt-dlp to work");
-
-    #[cfg(debug_assertions)]
-    let output = handle.wait_with_output();
-    #[cfg(not(debug_assertions))]
-    let output = handle.wait();
-    match output {
-        Ok(_) => {
-            println!("yt-dlp download successful, filename: {}", id);
-        }
-        Err(e) => {
-            eprintln!("yt-dlp download failed: {}", e);
-            return Err(GettingSongError::DownloadFailed(e));
-        }
-    };
-
     let metadata = {
         let read_metadata = ID_METADATA_CACHE.read().unwrap();
         if let Some(metadata) = read_metadata.get(id) {
             metadata.clone()
         } else {
-            CommonVideo::from(
+            drop(read_metadata);
+            let vid = CommonVideo::from(
                 get_client()
                     .video(id, None)
                     .map_err(|e| GettingSongError::from(e))?,
-            )
+            );
+            let mut write_metadata = ID_METADATA_CACHE.write().unwrap();
+            write_metadata.insert(id.to_owned(), vid.clone());
+            vid
         }
     };
+
+    if !fs::read_dir(&songs_dir)
+        .unwrap()
+        .any(|entry| entry.unwrap().file_name() == id)
+    {
+        let mut handle = process::Command::new("yt-dlp")
+            .current_dir(songs_dir.to_str().unwrap())
+            .args([
+                "-f",
+                "bestaudio[acodec=opus]",
+                "--max-filesize",
+                "6000k",
+                "-o",
+                "%(id)s",
+                id,
+            ])
+            .spawn()
+            .expect("spawning yt-dlp to work");
+
+        #[cfg(debug_assertions)]
+        let output = handle.wait_with_output();
+        #[cfg(not(debug_assertions))]
+        let output = handle.wait();
+        match output {
+            Ok(_) => {
+                println!("yt-dlp download successful, filename: {}", id);
+            }
+            Err(e) => {
+                eprintln!("yt-dlp download failed: {}", e);
+                return Err(GettingSongError::DownloadFailed(e));
+            }
+        };
+    }
 
     Ok(Song {
         id: id.to_owned(),
         title: metadata.title,
         artist: metadata.author,
     })
+}
+
+pub enum OneOrMoreSongs {
+    One(Song),
+    More(Vec<Song>),
+}
+
+pub fn get_one_or_more_songs_from_id(id: &str) -> Result<OneOrMoreSongs, GettingSongError> {
+    match id[..2].as_ref() {
+        "UC" | "PL" => {
+            let vids = common_vids_from_id(id)?;
+            let songs = songs_from_common_vids(vids)?;
+            Ok(OneOrMoreSongs::More(songs))
+        }
+        _ => Ok(OneOrMoreSongs::One(download_song_from_id(id)?)),
+    }
 }
