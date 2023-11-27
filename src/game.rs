@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ops::Deref,
     sync::{Arc, RwLock, RwLockReadGuard},
     thread,
     time::Duration,
@@ -26,6 +27,7 @@ pub enum UserAction {
     StartGame,
     GetSuggestions(String),
     AddSong(String),
+    StartGuessing,
     GuessSong(u8),
     LeaveGame,
     InvalidAction,
@@ -42,6 +44,7 @@ impl From<(&str, &str)> for UserAction {
             ("start", _) => UserAction::StartGame,
             ("suggest", query) => UserAction::GetSuggestions(query.to_string()),
             ("add", id) => UserAction::AddSong(id.to_string()),
+            ("start_guessing", _) => UserAction::StartGuessing,
             ("guess", idx) => UserAction::GuessSong(idx.parse().unwrap_or(0)),
             ("leave", _) => UserAction::LeaveGame,
             _ => UserAction::InvalidAction,
@@ -51,7 +54,7 @@ impl From<(&str, &str)> for UserAction {
 
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
-pub enum ServerMessage {
+pub enum ServerMessage<'a> {
     ServerAck,
     Error(String),
     GameCreated(u16),
@@ -65,6 +68,16 @@ pub enum ServerMessage {
     // song selection
     GameStartSelect,
     Suggestion(Vec<invidious::hidden::SearchItem>),
+    // guessing
+    GameStartGuessing,
+    GamePlayAudio(String),
+    GameGuessOptions(Vec<(&'a str, &'a str)>),
+
+    LeaderBoard(Vec<(&'a str, u16)>),
+    Correct(u8),
+
+    // restart => GameEnded (go back to lobby)
+    GameEnded,
 }
 
 #[derive(Clone, Debug)]
@@ -135,6 +148,7 @@ impl Game<'_> {
     fn ready(&mut self, user: RwLockReadGuard<'_, User>) -> ServerMessage {
         let name = user.name.clone();
         self.broadcast_message(ServerMessage::UserReady(name));
+
         match &mut self.state {
             GameStatus::Lobby(ready_count) => {
                 *ready_count += 1;
@@ -167,11 +181,6 @@ impl Game<'_> {
                     }
                 });
             }
-            GameStatus::Playing(_, PlayPhase::SelectingSongs) => {
-                if *user == *self.players[0].read().unwrap() {
-                    self.start_game();
-                }
-            }
             _ => return ServerMessage::Error("cannot ready up: game is not in lobby state".into()),
         };
         ServerMessage::ServerAck
@@ -195,6 +204,16 @@ impl Game<'_> {
         // self.state = GameStatus::Playing(Vec::new(), PlayPhase::SelectingSongs);
         self.set_state(GameStatus::Playing(Vec::new(), PlayPhase::SelectingSongs));
         self.broadcast_message(ServerMessage::GameStartSelect);
+    }
+
+    fn start_guessing(&mut self) {
+        match &mut self.state {
+            GameStatus::Playing(_, playphase) => {
+                *playphase = PlayPhase::GuessingSongs(Vec::new());
+                self.broadcast_message(ServerMessage::GameStartGuessing);
+            }
+            _ => (),
+        }
     }
 }
 
@@ -348,6 +367,18 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 }
             });
             ack();
+        }
+        UserAction::StartGuessing => {
+            let read_user = user.read().unwrap();
+            if read_user.game_id.is_none() {
+                user_addr.do_send(ServerMessage::Error(
+                    "cannot add song: not in a game".into(),
+                ));
+                return;
+            }
+            let games = GAMES.read().unwrap();
+            let game = games.get(&read_user.game_id.unwrap()).unwrap();
+            game.start_guessing();
         }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }
