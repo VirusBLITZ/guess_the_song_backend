@@ -54,7 +54,7 @@ impl From<(&str, &str)> for UserAction {
 
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
-pub enum ServerMessage<'a> {
+pub enum ServerMessage {
     ServerAck,
     Error(String),
     GameCreated(u16),
@@ -71,9 +71,9 @@ pub enum ServerMessage<'a> {
     // guessing
     GameStartGuessing,
     GamePlayAudio(String),
-    GameGuessOptions(Vec<(&'a str, &'a str)>),
+    GameGuessOptions(Vec<(String, String)>),
 
-    LeaderBoard(Vec<(&'a str, u16)>),
+    LeaderBoard(Vec<(String, u16)>),
     Correct(u8),
 
     // restart => GameEnded (go back to lobby)
@@ -376,8 +376,8 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 ));
                 return;
             }
-            let games = GAMES.read().unwrap();
-            let game = games.get(&read_user.game_id.unwrap()).unwrap();
+            let mut games = GAMES.write().unwrap();
+            let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
             game.start_guessing();
         }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
