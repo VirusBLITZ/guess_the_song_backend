@@ -1,3 +1,5 @@
+mod guessing_songs;
+
 use std::{
     collections::HashMap,
     ops::Deref,
