@@ -94,6 +94,10 @@ impl Handler<ServerMessage> for UserSocket {
                 )
                 .unwrap()
             ),
+            ServerMessage::GameStartGuessing => "game_start_guessing".to_string(),
+            ServerMessage::GamePlayAudio(id) => format!("game_play_audio {}", id),
+            ServerMessage::GameGuessOptions(options) => serde_json::to_string(&options).unwrap(),
+            ServerMessage::Correct(idx) => format!("correct {}", idx),
             // ServerMessage::GamePlayAudio
             _ => format!("{:?}", msg),
         });
