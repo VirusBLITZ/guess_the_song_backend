@@ -3,7 +3,10 @@ mod guessing_songs;
 use std::{
     collections::HashMap,
     ops::Deref,
-    sync::{Arc, RwLock, RwLockReadGuard, mpsc::Sender},
+    sync::{
+        mpsc::{Sender, SyncSender},
+        Arc, RwLock, RwLockReadGuard,
+    },
     thread,
     time::Duration,
 };
@@ -15,6 +18,8 @@ use crate::{
     model::{song::Song, user::User},
     music_handler, UserSocket,
 };
+
+use self::guessing_songs::handle_guessing;
 
 static GAMES: Lazy<RwLock<HashMap<u16, Game>>> = Lazy::new(|| RwLock::new(HashMap::new()));
 
@@ -92,7 +97,10 @@ pub enum GameStatus<'a> {
 #[derive(Clone, Debug)]
 pub enum PlayPhase<'a> {
     SelectingSongs,
-    GuessingSongs(Vec<(&'a Arc<RwLock<User>>, u16)>, Sender<(Arc<RwLock<User>>, u8)>), // leaderboard
+    GuessingSongs(
+        Vec<(&'a Arc<RwLock<User>>, u16)>, // leaderboard
+        SyncSender<(Arc<RwLock<User>>, u8)>,
+    ),
 }
 
 #[derive(Clone)]
@@ -218,7 +226,7 @@ impl Game<'_> {
                     ));
                     return;
                 }
-                *playphase = PlayPhase::GuessingSongs(Vec::new());
+                *playphase = PlayPhase::GuessingSongs(Vec::new(), handle_guessing(self.id));
                 self.broadcast_message(ServerMessage::GameStartGuessing);
             }
             _ => {
