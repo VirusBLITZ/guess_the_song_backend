@@ -3,7 +3,7 @@ mod guessing_songs;
 use std::{
     collections::HashMap,
     ops::Deref,
-    sync::{Arc, RwLock, RwLockReadGuard},
+    sync::{Arc, RwLock, RwLockReadGuard, mpsc::Sender},
     thread,
     time::Duration,
 };
@@ -92,7 +92,7 @@ pub enum GameStatus<'a> {
 #[derive(Clone, Debug)]
 pub enum PlayPhase<'a> {
     SelectingSongs,
-    GuessingSongs(Vec<(&'a User, u16)>), // leaderboard
+    GuessingSongs(Vec<(&'a Arc<RwLock<User>>, u16)>, Sender<(Arc<RwLock<User>>, u8)>), // leaderboard
 }
 
 #[derive(Clone)]
@@ -208,13 +208,25 @@ impl Game<'_> {
         self.broadcast_message(ServerMessage::GameStartSelect);
     }
 
-    fn start_guessing(&mut self) {
+    fn start_guessing(&mut self, user: Arc<RwLock<User>>) {
         match &mut self.state {
             GameStatus::Playing(_, playphase) => {
+                if !Arc::ptr_eq(&user, &self.players[0]) {
+                    let read_usr = user.read().unwrap();
+                    read_usr.ws.as_ref().unwrap().do_send(ServerMessage::Error(
+                        "cannot start guessing: you are not the leader".into(),
+                    ));
+                    return;
+                }
                 *playphase = PlayPhase::GuessingSongs(Vec::new());
                 self.broadcast_message(ServerMessage::GameStartGuessing);
             }
-            _ => (),
+            _ => {
+                let read_usr = user.read().unwrap();
+                read_usr.ws.as_ref().unwrap().do_send(ServerMessage::Error(
+                    "cannot start guessing: game is not in song selection state".into(),
+                ));
+            }
         }
     }
 }
@@ -380,7 +392,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             }
             let mut games = GAMES.write().unwrap();
             let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
-            game.start_guessing();
+            game.start_guessing(user.clone());
         }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }
