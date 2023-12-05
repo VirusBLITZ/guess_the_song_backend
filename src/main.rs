@@ -26,7 +26,6 @@ impl UserSocket {
             user: Arc::new(RwLock::new(User {
                 id: rand::random(),
                 name: "User ".to_string() + rand::random::<u8>().to_string().as_str(),
-                score: 0,
                 game_id: None,
                 ws: None,
             })),
@@ -95,6 +94,10 @@ impl Handler<ServerMessage> for UserSocket {
                 )
                 .unwrap()
             ),
+            ServerMessage::GameStartGuessing => "game_start_guessing".to_string(),
+            ServerMessage::GamePlayAudio(id) => format!("game_play_audio {}", id),
+            ServerMessage::GameGuessOptions(options) => serde_json::to_string(&options).unwrap(),
+            ServerMessage::Correct(idx) => format!("correct {}", idx),
             // ServerMessage::GamePlayAudio
             _ => format!("{:?}", msg),
         });
@@ -136,12 +139,18 @@ async fn index(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, E
     resp
 }
 
+const SONGS_ROUTE: &str = "/songs";
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     music_handler::start_instance_finder();
 
-    HttpServer::new(|| App::new().service(index))
-        .bind(("127.0.0.1", 8080))?
-        .run()
-        .await
+    HttpServer::new(|| {
+        App::new()
+            .service(index)
+            .service(actix_files::Files::new(SONGS_ROUTE, "./songs_cache"))
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
 }

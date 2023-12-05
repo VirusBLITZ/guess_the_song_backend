@@ -1,6 +1,12 @@
+mod guessing_songs;
+
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock, RwLockReadGuard},
+    ops::Deref,
+    sync::{
+        mpsc::{Sender, SyncSender},
+        Arc, RwLock, RwLockReadGuard,
+    },
     thread,
     time::Duration,
 };
@@ -12,6 +18,8 @@ use crate::{
     model::{song::Song, user::User},
     music_handler, UserSocket,
 };
+
+use self::guessing_songs::handle_guessing;
 
 static GAMES: Lazy<RwLock<HashMap<u16, Game>>> = Lazy::new(|| RwLock::new(HashMap::new()));
 
@@ -67,6 +75,16 @@ pub enum ServerMessage {
     // song selection
     GameStartSelect,
     Suggestion(Vec<invidious::hidden::SearchItem>),
+    // guessing
+    GameStartGuessing,
+    GamePlayAudio(String),
+    GameGuessOptions(Vec<(String, String)>),
+
+    LeaderBoard(Vec<(String, u16)>),
+    Correct(u8),
+
+    // restart => GameEnded (go back to lobby)
+    GameEnded,
 }
 
 #[derive(Clone, Debug)]
@@ -79,7 +97,10 @@ pub enum GameStatus<'a> {
 #[derive(Clone, Debug)]
 pub enum PlayPhase<'a> {
     SelectingSongs,
-    GuessingSongs(Vec<&'a User>),
+    GuessingSongs(
+        Vec<(&'a Arc<RwLock<User>>, u16)>, // leaderboard
+        SyncSender<(Arc<RwLock<User>>, u8)>,
+    ),
 }
 
 #[derive(Clone)]
@@ -137,6 +158,7 @@ impl Game<'_> {
     fn ready(&mut self, user: RwLockReadGuard<'_, User>) -> ServerMessage {
         let name = user.name.clone();
         self.broadcast_message(ServerMessage::UserReady(name));
+
         match &mut self.state {
             GameStatus::Lobby(ready_count) => {
                 *ready_count += 1;
@@ -167,7 +189,7 @@ impl Game<'_> {
                         }
                         game.start_game();
                     }
-                })
+                });
             }
             _ => return ServerMessage::Error("cannot ready up: game is not in lobby state".into()),
         };
@@ -192,6 +214,28 @@ impl Game<'_> {
         // self.state = GameStatus::Playing(Vec::new(), PlayPhase::SelectingSongs);
         self.set_state(GameStatus::Playing(Vec::new(), PlayPhase::SelectingSongs));
         self.broadcast_message(ServerMessage::GameStartSelect);
+    }
+
+    fn start_guessing(&mut self, user: Arc<RwLock<User>>) {
+        match &mut self.state {
+            GameStatus::Playing(_, playphase) => {
+                if !Arc::ptr_eq(&user, &self.players[0]) {
+                    let read_usr = user.read().unwrap();
+                    read_usr.ws.as_ref().unwrap().do_send(ServerMessage::Error(
+                        "cannot start guessing: you are not the leader".into(),
+                    ));
+                    return;
+                }
+                *playphase = PlayPhase::GuessingSongs(Vec::new(), handle_guessing(self.id));
+                self.broadcast_message(ServerMessage::GameStartGuessing);
+            }
+            _ => {
+                let read_usr = user.read().unwrap();
+                read_usr.ws.as_ref().unwrap().do_send(ServerMessage::Error(
+                    "cannot start guessing: game is not in song selection state".into(),
+                ));
+            }
+        }
     }
 }
 
@@ -288,52 +332,75 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             });
         }
         UserAction::AddSong(source_id) => {
-            let user_addr = user_addr.clone();
+            let read_user = user.read().unwrap();
+            if read_user.game_id.is_none() {
+                user_addr.do_send(ServerMessage::Error(
+                    "cannot add song: not in a game".into(),
+                ));
+                return;
+            }
+            let games = GAMES.read().unwrap();
+            let game = games.get(&read_user.game_id.unwrap()).unwrap();
+            match &game.state {
+                GameStatus::Playing(_, PlayPhase::SelectingSongs) => {}
+                _ => {
+                    user_addr.do_send(ServerMessage::Error(
+                        "cannot add song: game is not in song selection state".into(),
+                    ));
+                    return;
+                }
+            }
+            drop(read_user);
+            drop(games); // unlock during download
+
+            let user_c = user.clone();
             thread::spawn(move || {
-                let songs = music_handler::songs_from_id(source_id.as_str()).unwrap();
-                // if let Err(err) = songs {
-                //     user_addr.do_send(ServerMessage::Error(format!("{:?}", err)));
-                //     return;
-                // }
-                // let songs = songs.unwrap();
-                let game_id = user.read().unwrap().game_id;
-                {
-                    let mut games = GAMES.write().unwrap();
-                    match game_id {
-                        Some(game_id) => {
-                            if let Some(game) = games.get_mut(&game_id) {
-                                match &mut game.state {
-                                    GameStatus::Playing(game_songs, PlayPhase::SelectingSongs) => {
-                                        game_songs.extend(dbg!(songs));
-                                    }
-                                    _ => user_addr.do_send(ServerMessage::Error(
-                                        "cannot add song(s): game is not in song selection state"
-                                            .into(),
-                                    )),
-                                }
+                let read_user = user_c.read().unwrap();
+
+                let song_or_songs = music_handler::get_one_or_more_songs_from_id(&source_id);
+                match song_or_songs {
+                    Ok(song_or_songs) => {
+                        let mut games = GAMES.write().unwrap();
+                        let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
+                        drop(read_user);
+
+                        let game_songs = match &mut game.state {
+                            GameStatus::Playing(game_songs, _) => game_songs,
+                            _ => unreachable!(),
+                        };
+
+                        match song_or_songs {
+                            music_handler::OneOrMoreSongs::One(song) => {
+                                game_songs.push(song);
                             }
-
-                            // match games.get_mut(&game_id) {
-                            // Some(game) => match game.state.as_ref() {
-                            //     GameStatus::Playing(mut songs, PlayPhase::SelectingSongs) => {
-                            //         songs.extend(songs);
-                            //     }
-                            //     _ => user_addr.do_send(ServerMessage::Error(
-                            //         "cannot add song(s): game is not in song selection state".into(),
-                            //     )),
-                            // }
-                            // None => user_addr.do_send(ServerMessage::Error(
-                            //     "cannot add song(s): the game you're in doesn't exist".into(),
-                            // )),
+                            music_handler::OneOrMoreSongs::More(songs) => {
+                                game_songs.extend(songs);
+                            }
                         }
-
-                        None => user_addr.do_send(ServerMessage::Error(
-                            "cannot add song(s): not in a game".into(),
-                        )),
+                        dbg!(game_songs);
                     }
-                };
+                    Err(err) => {
+                        read_user
+                            .ws
+                            .as_ref()
+                            .unwrap()
+                            .do_send(ServerMessage::Error(format!("{:#?}", err)));
+                    }
+                }
             });
             ack();
+        }
+        UserAction::StartGuessing => {
+            let read_user = user.read().unwrap();
+            if read_user.game_id.is_none() {
+                user_addr.do_send(ServerMessage::Error(
+                    "cannot add song: not in a game".into(),
+                ));
+                return;
+            }
+            let mut games = GAMES.write().unwrap();
+            let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
+            game.start_guessing(user.clone());
         }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }

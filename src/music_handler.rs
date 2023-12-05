@@ -1,20 +1,21 @@
 // const API_CLIENT: invidious::
 
 use std::{
+    collections::BTreeMap,
+    fs,
+    process::{self, Command},
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
+        mpsc::channel,
         RwLock,
     },
     thread,
     time::Duration,
-    vec,
 };
 
 use invidious::{
-    channel::Channel,
-    hidden::{AdaptiveFormat, FormatStream},
-    video::Video,
-    ClientSync, ClientSyncTrait, CommonVideo, InvidiousError, MethodSync,
+    channel::Channel, hidden::SearchItem, ClientSync, ClientSyncTrait, CommonVideo, InvidiousError,
+    MethodSync,
 };
 use once_cell::sync::Lazy;
 use rand::seq::IteratorRandom;
@@ -77,23 +78,20 @@ impl InstanceFinder {
     /// Select the healthiest instance from the list of instances and replace the current ones
     fn update_instances(&self) {
         let best_instances = match reqwest::blocking::get(INSTANCES_API_URI) {
-            Ok(res) => {
-                // dbg!(res.text());
-                match res.json::<Vec<(String, Skip)>>() {
-                    Ok(instances) => {
-                        let mut uris: Vec<String> = Vec::with_capacity(INSTANCE_COUNT);
-                        instances
-                            .into_iter()
-                            .take(INSTANCE_COUNT)
-                            .for_each(|(uri, _)| uris.push(uri));
-                        uris
-                    }
-                    Err(_) => {
-                        eprintln!("Failed to parse instances.json");
-                        InstanceFinder::backup_instances()
-                    }
+            Ok(res) => match res.json::<Vec<(String, Skip)>>() {
+                Ok(instances) => {
+                    let mut uris: Vec<String> = Vec::with_capacity(INSTANCE_COUNT);
+                    instances
+                        .into_iter()
+                        .take(INSTANCE_COUNT)
+                        .for_each(|(uri, _)| uris.push(uri));
+                    uris
                 }
-            }
+                Err(_) => {
+                    eprintln!("Failed to parse instances.json");
+                    InstanceFinder::backup_instances()
+                }
+            },
             Err(_) => {
                 eprintln!("[UPDATER] couldn't get instances, using backup instances");
                 InstanceFinder::backup_instances()
@@ -114,17 +112,75 @@ pub fn start_instance_finder() {
     });
 }
 
-pub fn get_suggestions(query: &str) -> Result<Vec<invidious::hidden::SearchItem>, InvidiousError> {
+/// multithreaded playlist resolver
+fn common_vids_from_id(id: &str) -> Result<Vec<CommonVideo>, GettingSongError> {
+    if id.starts_with("UC") {
+        return Ok(get_client()
+            .channel_videos(id, Some("sort_by=popular"))?
+            .videos);
+    }
+    if !id.starts_with("PL") {
+        return Ok(vec![]);
+    };
+    let playlist = get_client().playlist(id, None)?;
+    let (tx, rx) = channel::<Option<CommonVideo>>();
+
+    playlist.videos.into_iter().for_each(|playlist_item| {
+        let tx = tx.clone();
+        thread::spawn(move || {
+            // tx.send(Some(get_client().video(&playlist_item.id.as_str(), None).unwrap().into()))
+            tx.send(match get_client().video(&playlist_item.id, None) {
+                Ok(vid) => Some(vid.into()),
+                Err(_) => None,
+            })
+        });
+    });
+    let mut common_vids: Vec<CommonVideo> = vec![];
+    for _ in 0..playlist.video_count {
+        common_vids.push(rx.recv().unwrap().ok_or(GettingSongError::OtherError)?);
+    }
+    Ok(common_vids)
+}
+
+static QUERY_CACHE: Lazy<RwLock<BTreeMap<String, Vec<SearchItem>>>> =
+    Lazy::new(|| RwLock::new(BTreeMap::new()));
+static ID_METADATA_CACHE: Lazy<RwLock<BTreeMap<String, CommonVideo>>> =
+    Lazy::new(|| RwLock::new(BTreeMap::new()));
+pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
+    {
+        let cache_read = QUERY_CACHE.read().unwrap();
+        if let Some(items) = cache_read.get(query) {
+            return Ok(items.clone());
+        }
+    }
+
     let client = get_client();
     println!("using instance: {} for this query", client.get_instance());
 
     let query = query.trim_matches('"');
-    Ok(client
+    let results = client
         .search(Some(format!("q=\"{}\"", query.replace(" ", "+")).as_str()))?
         .items
         .into_iter()
         .take(6)
-        .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    QUERY_CACHE
+        .write()
+        .unwrap()
+        .insert(query.to_owned(), results.clone());
+    {
+        let mut write_id_cache = ID_METADATA_CACHE.write().unwrap();
+
+        results.iter().for_each(|search_item: &SearchItem| {
+            match search_item {
+                SearchItem::Video(vd) => {
+                    write_id_cache.insert(vd.id.clone(), vd.clone());
+                }
+                _ => (), // channel & playlist would need another request
+            };
+        });
+    }
+    Ok(results)
 }
 
 fn get_client() -> ClientSync {
@@ -132,32 +188,6 @@ fn get_client() -> ClientSync {
         format!("https://{}", INSTANCE_FINDER.get_instance()),
         MethodSync::HttpReq,
     )
-}
-
-trait SongSource {
-    fn try_get_songs(self, instance_url: String) -> Result<Vec<Song>, GettingSongError>;
-}
-
-// impl SongSource for invidious::video::Video {}
-
-impl SongSource for Video {
-    fn try_get_songs(self, instance_url: String) -> Result<Vec<Song>, GettingSongError> {
-        let mut fmts: Vec<_> = self
-            .adaptive_formats
-            .into_iter()
-            .filter(|s| s.r#type.starts_with("audio"))
-            .collect();
-        fmts.sort_by(|a, b| b.bitrate.cmp(&a.bitrate));
-        fmts.drain(1..);
-        let song = Song::try_from((
-            self.id,
-            self.title,
-            self.author,
-            fmts.into_iter().next().unwrap(),
-            instance_url,
-        ))?;
-        Ok(vec![song])
-    }
 }
 
 fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSongError> {
@@ -170,17 +200,8 @@ fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSo
         .choose_multiple(&mut rand::thread_rng(), 5)
     {
         let tx = tx.clone();
-        let client = get_client();
         thread::spawn(move || {
-            let vid_res = client.video(&video.id, None);
-            let song = match vid_res {
-                Ok(vid) => match vid.try_get_songs(client.instance) {
-                    Ok(song) => Some(song.into_iter().next().unwrap()),
-                    Err(_) => None,
-                },
-                _ => None,
-            };
-            tx.send(song).unwrap();
+            tx.send(download_song_from_id(&video.id).ok()).unwrap();
         });
     }
 
@@ -192,33 +213,83 @@ fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSo
     Ok(songs)
 }
 
-impl SongSource for Channel {
-    fn try_get_songs(self, instance_url: String) -> Result<Vec<Song>, GettingSongError> {
-        // load channel videos
-        // get first 30 most popular videos
-        // select 5 random videos from those
-        // get songs from those videos
-        let client = get_client();
+fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
+    let mut songs_dir = std::env::current_dir().unwrap();
+    songs_dir.push("songs_cache");
 
-        let videos = client
-            .channel_videos(&self.id, Some("sort_by=popular"))?
-            .videos;
-
-        Ok(songs_from_common_vids(videos)?)
+    if !songs_dir.exists() {
+        fs::create_dir(&songs_dir).unwrap();
     }
+
+    let metadata = {
+        let read_metadata = ID_METADATA_CACHE.read().unwrap();
+        if let Some(metadata) = read_metadata.get(id) {
+            metadata.clone()
+        } else {
+            drop(read_metadata);
+            let vid = CommonVideo::from(
+                get_client()
+                    .video(id, None)
+                    .map_err(|e| GettingSongError::from(e))?,
+            );
+            let mut write_metadata = ID_METADATA_CACHE.write().unwrap();
+            write_metadata.insert(id.to_owned(), vid.clone());
+            vid
+        }
+    };
+
+    if !fs::read_dir(&songs_dir)
+        .unwrap()
+        .any(|entry| entry.unwrap().file_name() == id)
+    {
+        let mut handle = process::Command::new("yt-dlp")
+            .current_dir(songs_dir.to_str().unwrap())
+            .args([
+                "-f",
+                "bestaudio[acodec=opus]",
+                "--max-filesize",
+                "6000k",
+                "-o",
+                "%(id)s",
+                id,
+            ])
+            .spawn()
+            .expect("spawning yt-dlp to work");
+
+        #[cfg(debug_assertions)]
+        let output = handle.wait_with_output();
+        #[cfg(not(debug_assertions))]
+        let output = handle.wait();
+        match output {
+            Ok(_) => {
+                println!("yt-dlp download successful, filename: {}", id);
+            }
+            Err(e) => {
+                eprintln!("yt-dlp download failed: {}", e);
+                return Err(GettingSongError::DownloadFailed(e));
+            }
+        };
+    }
+
+    Ok(Song {
+        id: id.to_owned(),
+        title: metadata.title,
+        artist: metadata.author,
+    })
 }
 
-pub fn songs_from_id(id: &str) -> Result<Vec<Song>, GettingSongError> {
-    let client = get_client();
+pub enum OneOrMoreSongs {
+    One(Song),
+    More(Vec<Song>),
+}
 
-    let mut songs: Vec<Song> = vec![];
-    match id.get(0..2) {
-        Some(start) => songs.extend(match start {
-            "UC" => client.channel(id, None)?.try_get_songs(client.instance)?,
-            // "PL" => println!("playlist"),
-            _ => client.video(id, None)?.try_get_songs(client.instance)?,
-        }),
-        None => println!("no id"),
-    };
-    Ok(songs)
+pub fn get_one_or_more_songs_from_id(id: &str) -> Result<OneOrMoreSongs, GettingSongError> {
+    match id[..2].as_ref() {
+        "UC" | "PL" => {
+            let vids = common_vids_from_id(id)?;
+            let songs = songs_from_common_vids(vids)?;
+            Ok(OneOrMoreSongs::More(songs))
+        }
+        _ => Ok(OneOrMoreSongs::One(download_song_from_id(id)?)),
+    }
 }
