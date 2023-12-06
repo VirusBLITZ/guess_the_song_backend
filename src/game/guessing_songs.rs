@@ -8,7 +8,10 @@ use std::{
 };
 
 use invidious::hidden::Users;
-use rand::seq::IteratorRandom;
+use rand::{
+    seq::{IteratorRandom, SliceRandom},
+    thread_rng,
+};
 
 use crate::model::user::User;
 
@@ -47,11 +50,20 @@ fn handle_game(game_id: u16, user_msgs: Receiver<(Arc<RwLock<User>>, u8)>) {
 
     for song in &songs {
         broadcast_users(&players, ServerMessage::GamePlayAudio(song.id.clone()));
-        let options = songs
+        let mut options = songs
             .iter()
-            .map(|s| Arc::new((song.title.as_str(), song.artist.as_str())))
+            .map(|s| ((s.title.clone(), s.artist.clone())))
             .choose_multiple(&mut rand::thread_rng(), 3);
-        broadcast_users(&players, ServerMessage::GameGuessOptions(options))
+        if options
+            .iter()
+            .find(|(t, a)| t == &song.title && a == &song.artist)
+            .is_none()
+        {
+            *options.choose_mut(&mut thread_rng()).unwrap() =
+                (song.title.clone(), song.artist.clone());
+        }
+        dbg!(&song);
+        broadcast_users(&players, ServerMessage::GameGuessOptions(options));
         // rx.try_recv()
     }
 }

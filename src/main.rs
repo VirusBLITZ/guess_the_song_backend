@@ -75,7 +75,7 @@ impl Actor for UserSocket {
         actix::Running::Stop
     }
 }
-impl Handler<ServerMessage<'_>> for UserSocket {
+impl Handler<ServerMessage> for UserSocket {
     type Result = ();
 
     fn handle(&mut self, msg: ServerMessage, ctx: &mut Self::Context) {
