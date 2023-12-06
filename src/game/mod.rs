@@ -61,7 +61,7 @@ impl From<(&str, &str)> for UserAction {
 
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
-pub enum ServerMessage {
+pub enum ServerMessage<'a> {
     ServerAck,
     Error(String),
     GameCreated(u16),
@@ -78,7 +78,7 @@ pub enum ServerMessage {
     // guessing
     GameStartGuessing,
     GamePlayAudio(String),
-    GameGuessOptions(Vec<(String, String)>),
+    GameGuessOptions(Vec<(&'a str, &'a str)>),
 
     LeaderBoard(Vec<(String, u16)>),
     Correct(u8),
