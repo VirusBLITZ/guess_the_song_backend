@@ -55,7 +55,13 @@ impl Actor for UserSocket {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
-        ctx.text("Hello World!");
+        ctx.text(format!(
+            "GTS v{} | {} | under {}",
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_REPOSITORY"),
+            env!("CARGO_PKG_LICENSE")
+        ));
+        ctx.text(format!("song_route {}", SONGS_ROUTE));
         self.user.write().unwrap().ws = Some(ctx.address());
     }
 
