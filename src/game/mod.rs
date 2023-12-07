@@ -80,7 +80,7 @@ pub enum ServerMessage {
     GamePlayAudio(String),
     GameGuessOptions(Vec<(String, String)>),
 
-    LeaderBoard(Vec<(String, u16)>),
+    LeaderBoard(Vec<(String, usize)>),
     Correct(u8),
 
     // restart => GameEnded (go back to lobby)
@@ -88,29 +88,26 @@ pub enum ServerMessage {
 }
 
 #[derive(Clone, Debug)]
-pub enum GameStatus<'a> {
+pub enum GameStatus {
     Lobby(u8), // ready count
-    Playing(Vec<Song>, PlayPhase<'a>),
+    Playing(Vec<Song>, PlayPhase),
     Ended,
 }
 
 #[derive(Clone, Debug)]
-pub enum PlayPhase<'a> {
+pub enum PlayPhase {
     SelectingSongs,
-    GuessingSongs(
-        Vec<(&'a Arc<RwLock<User>>, u16)>, // leaderboard
-        SyncSender<(Arc<RwLock<User>>, u8)>,
-    ),
+    GuessingSongs(SyncSender<(Arc<RwLock<User>>, u8)>),
 }
 
 #[derive(Clone)]
-pub struct Game<'a> {
+pub struct Game {
     pub id: u16,
     pub players: Vec<Arc<RwLock<User>>>,
-    pub state: GameStatus<'a>,
+    pub state: GameStatus,
 }
 
-impl Game<'_> {
+impl Game {
     fn new() -> Self {
         Self {
             id: rand::random(),
@@ -119,13 +116,20 @@ impl Game<'_> {
         }
     }
 
-    fn set_state(&mut self, state: GameStatus<'static>) {
+    fn set_state(&mut self, state: GameStatus) {
         println!("[GAME {}] now in state {:?}", self.id, state);
         self.state = state;
     }
 
     fn join_game(&mut self, user: Arc<RwLock<User>>, addr: Addr<UserSocket>) {
         user.write().unwrap().game_id = Some(self.id);
+
+        if !matches!(self.state, GameStatus::Lobby(_)) {
+            addr.do_send(ServerMessage::Error(
+                "cannot join game: game is not in lobby state".into(),
+            ));
+            return;
+        }
 
         self.broadcast_message(ServerMessage::UserJoin(user.read().unwrap().name.clone()));
         self.players.iter().for_each(|player| {
@@ -142,9 +146,11 @@ impl Game<'_> {
         self.players
             .retain(|player| player.read().unwrap().id != user_id);
 
-        println!("[leave] before write user lock 4");
         user.write().unwrap().game_id = None;
-        println!("[leave] after write user lock 4");
+
+        if self.players.is_empty() {
+            GAMES.write().unwrap().remove(&self.id);
+        }
     }
 
     fn broadcast_message(&self, msg: ServerMessage) {
@@ -226,7 +232,7 @@ impl Game<'_> {
                     ));
                     return;
                 }
-                *playphase = PlayPhase::GuessingSongs(Vec::new(), handle_guessing(self.id));
+                *playphase = PlayPhase::GuessingSongs(handle_guessing(self.id));
                 self.broadcast_message(ServerMessage::GameStartGuessing);
             }
             _ => {
@@ -277,8 +283,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
         }
         UserAction::JoinGame(room_id) => {
             leave_current();
-            let mut games: std::sync::RwLockWriteGuard<'_, HashMap<u16, Game<'_>>> =
-                GAMES.write().unwrap();
+            let mut games = GAMES.write().unwrap();
             match games.get_mut(&room_id) {
                 Some(game) => {
                     game.join_game(user.clone(), user_addr);
@@ -401,6 +406,28 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             let mut games = GAMES.write().unwrap();
             let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
             game.start_guessing(user.clone());
+        }
+        UserAction::GuessSong(idx) => {
+            let read_user = user.read().unwrap();
+            if read_user.game_id.is_none() {
+                user_addr.do_send(ServerMessage::Error(
+                    "cannot add song: not in a game".into(),
+                ));
+                return;
+            }
+            let mut games = GAMES.write().unwrap();
+            let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
+            match &mut game.state {
+                GameStatus::Playing(_, PlayPhase::GuessingSongs(tx)) => {
+                    tx.send((user.clone(), idx)).unwrap();
+                }
+                _ => {
+                    user_addr.do_send(ServerMessage::Error(
+                        "cannot guess song: game is not in guessing state".into(),
+                    ));
+                    return;
+                }
+            }
         }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
     }

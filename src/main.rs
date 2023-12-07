@@ -104,6 +104,11 @@ impl Handler<ServerMessage> for UserSocket {
             ServerMessage::GamePlayAudio(id) => format!("game_play_audio {}", id),
             ServerMessage::GameGuessOptions(options) => serde_json::to_string(&options).unwrap(),
             ServerMessage::Correct(idx) => format!("correct {}", idx),
+            ServerMessage::LeaderBoard(leaderboard) => format!(
+                "leaderboard {}",
+                serde_json::to_string(&leaderboard).unwrap()
+            ),
+            ServerMessage::GameEnded => "game_ended".to_string(),
             // ServerMessage::GamePlayAudio
             _ => format!("{:?}", msg),
         });

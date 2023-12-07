@@ -5,6 +5,7 @@ use std::{
         Arc, RwLock,
     },
     thread,
+    time::Duration,
 };
 
 use invidious::hidden::Users;
@@ -46,7 +47,8 @@ fn handle_game(game_id: u16, user_msgs: Receiver<(Arc<RwLock<User>>, u8)>) {
     let songs = replace(songs, Vec::new());
     let players = game.players.clone();
     drop(games);
-    println!("took songs: {:?}", songs);
+
+    let mut leaderboad: Vec<(Arc<RwLock<User>>, usize)> = Vec::new();
 
     for song in &songs {
         broadcast_users(&players, ServerMessage::GamePlayAudio(song.id.clone()));
@@ -62,8 +64,47 @@ fn handle_game(game_id: u16, user_msgs: Receiver<(Arc<RwLock<User>>, u8)>) {
             *options.choose_mut(&mut thread_rng()).unwrap() =
                 (song.title.clone(), song.artist.clone());
         }
-        dbg!(&song);
-        broadcast_users(&players, ServerMessage::GameGuessOptions(options));
+        broadcast_users(&players, ServerMessage::GameGuessOptions(options.clone()));
+
+        let guessing_start: std::time::Instant = std::time::Instant::now();
+        let guess_timeout = Duration::from_secs(30);
+        let remaining = guess_timeout - guessing_start.elapsed();
+        let mut guessed_count = 0;
+        while guessed_count < players.len() && guessing_start.elapsed() < Duration::from_secs(30) {
+            if let Ok((user, guess)) = user_msgs.recv_timeout(remaining) {
+                let guessed_at = guessing_start.elapsed().as_secs() * 10;
+                match options.get(guess as usize) {
+                    Some((title, artist)) if title == &song.title && artist == &song.artist => {
+                        let mut leader_entry =
+                            leaderboad.iter_mut().find(|(u, _)| Arc::ptr_eq(&user, u));
+                        if let None = leader_entry {
+                            leaderboad.push((user.clone(), 0));
+                            leader_entry = leaderboad.last_mut();
+                        }
+                        leader_entry.unwrap().1 += (33
+                            + ((1) / (guessed_at + 33))
+                                * 2500
+                                * (f64::log10((guessed_at + 100) as f64) as u64))
+                            as usize;
+                    }
+                    _ => {}
+                }
+                guessed_count += 1;
+            }
+        }
         // rx.try_recv()
+        broadcast_users(
+            &players,
+            ServerMessage::LeaderBoard(
+                leaderboad
+                    .clone()
+                    .into_iter()
+                    .map(|(u, s)| (u.read().unwrap().name.clone(), s))
+                    .collect(),
+            ),
+        );
     }
+    broadcast_users(&players, ServerMessage::GameEnded);
+    let mut games = GAMES.write().unwrap();
+    games.get_mut(&game_id).unwrap().state = super::GameStatus::Lobby(0);
 }
