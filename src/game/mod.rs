@@ -87,7 +87,6 @@ pub enum ServerMessage {
 pub enum GameStatus {
     Lobby(u8), // ready count
     Playing(Vec<Song>, PlayPhase),
-    Ended,
 }
 
 #[derive(Clone, Debug)]

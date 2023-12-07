@@ -2,8 +2,6 @@ use actix::Addr;
 
 use crate::UserSocket;
 
-type Message = String;
-
 #[derive(Clone, Debug)]
 pub struct User {
     pub id: u32,

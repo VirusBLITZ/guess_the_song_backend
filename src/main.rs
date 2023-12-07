@@ -110,6 +110,7 @@ impl Handler<ServerMessage> for UserSocket {
             ),
             ServerMessage::GameEnded => "game_ended".to_string(),
             // ServerMessage::GamePlayAudio
+            #[allow(unreachable_patterns)]
             _ => format!("{:?}", msg),
         });
     }

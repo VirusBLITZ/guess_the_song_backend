@@ -241,6 +241,7 @@ fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
         .unwrap()
         .any(|entry| entry.unwrap().file_name() == id)
     {
+        #[allow(unused_mut)]
         let mut handle = process::Command::new("yt-dlp")
             .current_dir(songs_dir.to_str().unwrap())
             .args([
