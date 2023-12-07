@@ -95,7 +95,7 @@ impl Handler<ServerMessage> for UserSocket {
                 serde_json::to_string(
                     &songs
                         .into_iter()
-                        .map(|s| SearchResult::from(s))
+                        .map(SearchResult::from)
                         .collect::<Vec<_>>()
                 )
                 .unwrap()
@@ -145,9 +145,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for UserSocket {
 
 #[get("/ws")]
 async fn index(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
-    let resp = ws::start(UserSocket::new(), &req, stream);
     // println!("{:?}", resp);
-    resp
+    ws::start(UserSocket::new(), &req, stream)
 }
 
 const SONGS_ROUTE: &str = "/songs";

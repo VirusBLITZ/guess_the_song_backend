@@ -2,11 +2,7 @@ mod guessing_songs;
 
 use std::{
     collections::HashMap,
-    ops::Deref,
-    sync::{
-        mpsc::{Sender, SyncSender},
-        Arc, RwLock, RwLockReadGuard,
-    },
+    sync::{mpsc::SyncSender, Arc, RwLock, RwLockReadGuard},
     thread,
     time::Duration,
 };
@@ -135,7 +131,7 @@ impl Game {
         self.players.iter().for_each(|player| {
             addr.do_send(ServerMessage::UserJoin(player.read().unwrap().name.clone()));
         });
-        self.players.push(user.clone());
+        self.players.push(user);
     }
 
     fn leave_game(&mut self, user: Arc<RwLock<User>>) {
@@ -425,7 +421,6 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                     user_addr.do_send(ServerMessage::Error(
                         "cannot guess song: game is not in guessing state".into(),
                     ));
-                    return;
                 }
             }
         }

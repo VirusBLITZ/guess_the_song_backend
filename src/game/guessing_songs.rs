@@ -1,14 +1,12 @@
 use std::{
-    mem::replace,
     sync::{
-        mpsc::{sync_channel, Receiver, Sender, SyncSender},
+        mpsc::{sync_channel, Receiver, SyncSender},
         Arc, RwLock,
     },
     thread,
     time::Duration,
 };
 
-use invidious::hidden::Users;
 use rand::{
     seq::{IteratorRandom, SliceRandom},
     thread_rng,
@@ -23,7 +21,7 @@ pub fn handle_guessing(game_id: u16) -> SyncSender<PlayerGuess> {
     let (tx, rx) = sync_channel::<PlayerGuess>(6);
 
     thread::spawn(move || handle_game(game_id, rx));
-    return tx;
+    tx
 }
 
 fn broadcast_users(users: &Vec<Arc<RwLock<User>>>, msg: ServerMessage) {
@@ -44,7 +42,7 @@ fn handle_game(game_id: u16, user_msgs: Receiver<(Arc<RwLock<User>>, u8)>) {
         super::GameStatus::Playing(ref mut songs, _) => songs,
         _ => return,
     };
-    let songs = replace(songs, Vec::new());
+    let songs = std::mem::take(songs);
     let players = game.players.clone();
     drop(games);
 
@@ -56,10 +54,9 @@ fn handle_game(game_id: u16, user_msgs: Receiver<(Arc<RwLock<User>>, u8)>) {
             .iter()
             .map(|s| ((s.title.clone(), s.artist.clone())))
             .choose_multiple(&mut rand::thread_rng(), 3);
-        if options
+        if !options
             .iter()
-            .find(|(t, a)| t == &song.title && a == &song.artist)
-            .is_none()
+            .any(|(t, a)| t == &song.title && a == &song.artist)
         {
             *options.choose_mut(&mut thread_rng()).unwrap() =
                 (song.title.clone(), song.artist.clone());
@@ -77,7 +74,7 @@ fn handle_game(game_id: u16, user_msgs: Receiver<(Arc<RwLock<User>>, u8)>) {
                     Some((title, artist)) if title == &song.title && artist == &song.artist => {
                         let mut leader_entry =
                             leaderboad.iter_mut().find(|(u, _)| Arc::ptr_eq(&user, u));
-                        if let None = leader_entry {
+                        if leader_entry.is_none() {
                             leaderboad.push((user.clone(), 0));
                             leader_entry = leaderboad.last_mut();
                         }

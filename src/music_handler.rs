@@ -3,7 +3,7 @@
 use std::{
     collections::BTreeMap,
     fs,
-    process::{self, Command},
+    process::{self},
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
         mpsc::channel,
@@ -14,14 +14,13 @@ use std::{
 };
 
 use invidious::{
-    channel::Channel, hidden::SearchItem, ClientSync, ClientSyncTrait, CommonVideo, InvidiousError,
-    MethodSync,
+    hidden::SearchItem, ClientSync, ClientSyncTrait, CommonVideo, InvidiousError, MethodSync,
 };
 use once_cell::sync::Lazy;
 use rand::seq::IteratorRandom;
 use serde::Deserialize;
 
-use crate::model::song::{self, GettingSongError, Song};
+use crate::model::song::{GettingSongError, Song};
 
 // static API_CLIENT: Lazy<RwLock<invidious::ClientSync>> =
 //     Lazy::new(|| RwLock::new(invidious::ClientSync::default()));
@@ -29,7 +28,7 @@ use crate::model::song::{self, GettingSongError, Song};
 const INSTANCE_COUNT: usize = 3;
 
 #[cfg(debug_assertions)]
-const INSTANCES_API_URI: &'static str = "NOT_THE_API";
+const INSTANCES_API_URI: &str = "NOT_THE_API";
 #[cfg(not(debug_assertions))]
 const INSTANCES_API_URI: &'static str = "https://api.invidious.io/instances.json?sort_by=health";
 const BACKUP_INSTANCES: [&str; 3] = [
@@ -159,7 +158,7 @@ pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
 
     let query = query.trim_matches('"');
     let results = client
-        .search(Some(format!("q=\"{}\"", query.replace(" ", "+")).as_str()))?
+        .search(Some(format!("q=\"{}\"", query.replace(' ', "+")).as_str()))?
         .items
         .into_iter()
         .take(6)
@@ -230,7 +229,7 @@ fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
             let vid = CommonVideo::from(
                 get_client()
                     .video(id, None)
-                    .map_err(|e| GettingSongError::from(e))?,
+                    .map_err(GettingSongError::from)?,
             );
             let mut write_metadata = ID_METADATA_CACHE.write().unwrap();
             write_metadata.insert(id.to_owned(), vid.clone());

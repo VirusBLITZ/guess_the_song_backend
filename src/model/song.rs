@@ -1,15 +1,11 @@
 use std::string::String;
 
-use invidious::{hidden::AdaptiveFormat, CommonVideo};
-
-use crate::music_handler;
-
 #[derive(Debug)]
 pub enum GettingSongError {
     ReqwestErr(reqwest::Error),
     InvidiousErr(invidious::InvidiousError),
     DownloadFailed(std::io::Error),
-    OtherError
+    OtherError,
 }
 
 impl From<reqwest::Error> for GettingSongError {
