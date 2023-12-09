@@ -133,7 +133,7 @@ impl Game {
         self.players.push(user);
     }
 
-    fn leave_game(&mut self, user: Arc<RwLock<User>>) {
+    fn leave_game(&mut self, user: Arc<RwLock<User>>) -> bool {
         let user_id = user.read().unwrap().id;
 
         let name = user.read().unwrap().name.clone();
@@ -143,9 +143,7 @@ impl Game {
 
         user.write().unwrap().game_id = None;
 
-        if self.players.is_empty() {
-            GAMES.write().unwrap().remove(&self.id);
-        }
+        self.players.is_empty()
     }
 
     fn broadcast_message(&self, msg: ServerMessage) {
@@ -250,10 +248,12 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
     let ack = || user_addr.do_send(ServerMessage::ServerAck);
     let leave_current = || {
         let mut games = GAMES.write().unwrap();
-        let opt_prev_room_id = user.read().unwrap().game_id;
-        if let Some(room_id) = opt_prev_room_id {
+        let user_room_id = user.read().unwrap().game_id;
+        if let Some(room_id) = user_room_id {
             if let Some(game) = games.get_mut(&room_id) {
-                game.leave_game(user.clone());
+                if game.leave_game(user.clone()) {
+                    games.remove(&room_id);
+                }
             }
         }
     };
@@ -377,7 +377,6 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                                 game_songs.extend(songs);
                             }
                         }
-                        dbg!(game_songs);
                     }
                     Err(err) => {
                         read_user
