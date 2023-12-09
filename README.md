@@ -219,7 +219,7 @@ Project Link: [https://github.com/VirusBLITZ/guess_the_song_backend](https://git
 [issues-shield]: https://img.shields.io/github/issues/VirusBLITZ/guess_the_song_backend.svg?style=for-the-badge
 [issues-url]: https://github.com/VirusBLITZ/guess_the_song_backend/issues
 [license-shield]: https://img.shields.io/github/license/VirusBLITZ/guess_the_song_backend.svg?style=for-the-badge
-[license-url]: https://github.com/VirusBLITZ/guess_the_song_backend/blob/master/LICENSE.txt
+[license-url]: https://github.com/VirusBLITZ/guess_the_song_backend/blob/master/LICENSE
 
 [Rust]: https://img.shields.io/badge/rust-000000?style=for-the-badge&logo=rust&logoColor=orange
 [Rust-url]: https://rust-lang.org/
