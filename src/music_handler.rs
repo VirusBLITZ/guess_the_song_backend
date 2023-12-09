@@ -12,6 +12,8 @@ use std::{
     thread,
     time::Duration,
 };
+#[cfg(not(debug_assertions))]
+use std::process::Stdio;
 
 use invidious::{
     hidden::SearchItem, ClientSync, ClientSyncTrait, CommonVideo, InvidiousError, MethodSync,
@@ -241,26 +243,26 @@ fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
         .unwrap()
         .any(|entry| entry.unwrap().file_name() == id)
     {
-        #[allow(unused_mut)]
-        let mut handle = process::Command::new("yt-dlp")
-            .current_dir(songs_dir.to_str().unwrap())
-            .args([
-                "-f",
-                "bestaudio[acodec=opus]",
-                "--max-filesize",
-                "6000k",
-                "-o",
-                "%(id)s",
-                id,
-            ])
+        let command = &mut process::Command::new("yt-dlp");
+        let cmd = command.current_dir(songs_dir.to_str().unwrap()).args([
+            "-f",
+            "bestaudio[acodec=opus]",
+            "--max-filesize",
+            "6000k",
+            "-o",
+            "%(id)s",
+            id,
+        ]);
+
+        #[cfg(not(debug_assertions))]
+        let mut handle = cmd
+            .stdout(Stdio::null())
             .spawn()
             .expect("spawning yt-dlp to work");
-
         #[cfg(debug_assertions)]
-        let output = handle.wait_with_output();
-        #[cfg(not(debug_assertions))]
-        let output = handle.wait();
-        match output {
+        let mut handle = cmd.spawn().expect("spawning yt-dlp to work");
+
+        match handle.wait() {
             Ok(_) => {
                 println!("yt-dlp download successful, filename: {}", id);
             }
