@@ -91,8 +91,6 @@ Some possible clients that could easily be made:
 
 ### Built With
 
-This section should list any major frameworks/libraries used to bootstrap your project. Leave any add-ons/plugins for the acknowledgements section. Here are a few examples.
-
 * [![Rust][rust-lang.org]][Rust-url]
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -115,8 +113,6 @@ To set this up locally, you will need the following:
   ```
 
 ### Installation
-
-_Below is an example of how you can instruct your audience on installing and setting up your app. This template doesn't rely on any external dependencies or services._
 
 1. Clone the repo
    ```sh
