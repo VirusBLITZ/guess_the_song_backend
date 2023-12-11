@@ -1,19 +1,22 @@
 // const API_CLIENT: invidious::
 
+#[cfg(not(debug_assertions))]
+use std::process::Stdio;
 use std::{
     collections::BTreeMap,
     fs,
     process::{self},
     sync::{
-        atomic::{AtomicUsize, Ordering::Relaxed},
+        atomic::{
+            AtomicUsize,
+            Ordering::{Relaxed, SeqCst},
+        },
         mpsc::channel,
         RwLock,
     },
     thread,
     time::Duration,
 };
-#[cfg(not(debug_assertions))]
-use std::process::Stdio;
 
 use invidious::{
     hidden::SearchItem, ClientSync, ClientSyncTrait, CommonVideo, InvidiousError, MethodSync,
@@ -61,11 +64,8 @@ impl InstanceFinder {
 
     pub fn get_instance(&self) -> String {
         let instances = self.instances.read().unwrap();
-        let rr_idx = self.rr_index.load(Relaxed);
-        self.rr_index.store(rr_idx + 1, Relaxed);
-        if rr_idx + 1 >= instances.len() {
-            self.rr_index.store(0, Relaxed);
-        }
+        let rr_idx = self.rr_index.load(SeqCst);
+        self.rr_index.store(dbg!((rr_idx + 1) % instances.len()), SeqCst);
         instances.get(rr_idx).unwrap().clone()
     }
 
