@@ -7,10 +7,7 @@ use std::{
     fs,
     process::{self},
     sync::{
-        atomic::{
-            AtomicUsize,
-            Ordering::{Relaxed, SeqCst},
-        },
+        atomic::{AtomicUsize, Ordering::SeqCst},
         mpsc::channel,
         RwLock,
     },
@@ -65,7 +62,7 @@ impl InstanceFinder {
     pub fn get_instance(&self) -> String {
         let instances = self.instances.read().unwrap();
         let rr_idx = self.rr_index.load(SeqCst);
-        self.rr_index.store(dbg!((rr_idx + 1) % instances.len()), SeqCst);
+        self.rr_index.store((rr_idx + 1) % instances.len(), SeqCst);
         instances.get(rr_idx).unwrap().clone()
     }
 
