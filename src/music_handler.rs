@@ -113,9 +113,15 @@ pub fn start_instance_finder() {
 /// multithreaded playlist resolver
 fn common_vids_from_id(id: &str) -> Result<Vec<CommonVideo>, GettingSongError> {
     if id.starts_with("UC") {
-        return Ok(get_client()
-            .channel_videos(id, Some("sort_by=popular"))?
-            .videos);
+        let get_channel_vids = || get_client().channel_videos(id, Some("sort_by=popular"));
+
+        let channel_vids = get_channel_vids();
+
+        return match channel_vids {
+            Ok(vids) => Ok(vids.videos),
+            // second try with other instance/client, needed when region blocked
+            Err(_) => Ok(get_channel_vids()?.videos),
+        };
     }
     if !id.starts_with("PL") {
         return Ok(vec![]);
@@ -184,7 +190,7 @@ pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
 fn get_client() -> ClientSync {
     ClientSync::with_method(
         format!("https://{}", INSTANCE_FINDER.get_instance()),
-        MethodSync::HttpReq,
+        MethodSync::Reqwest,
     )
 }
 
