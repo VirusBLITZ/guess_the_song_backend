@@ -372,7 +372,10 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
 
                         let game_songs = match &mut game.state {
                             GameStatus::Playing(game_songs, _) => game_songs,
-                            _ => unreachable!(),
+                            _ => {
+                                println!("Game started before song download could finish");
+                                return;
+                            }
                         };
 
                         match song_or_songs {
