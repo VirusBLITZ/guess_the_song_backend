@@ -163,7 +163,7 @@ pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
 
     let query = query.trim_matches('"');
     let results = client
-        .search(Some(format!("q=\"{}\"", query.replace(' ', "+")).as_str()))?
+        .search(Some(format!("q={}", query.replace(' ', "+")).as_str()))?
         .items
         .into_iter()
         .take(6)
@@ -180,7 +180,7 @@ pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
                 SearchItem::Video(vd) => {
                     write_id_cache.insert(vd.id.clone(), vd.clone());
                 }
-                _ => (), // channel & playlist would need another request
+                _ => (), // channel & playlist vids would need another request
             };
         });
     }
@@ -190,7 +190,7 @@ pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
 fn get_client() -> ClientSync {
     ClientSync::with_method(
         format!("https://{}", INSTANCE_FINDER.get_instance()),
-        MethodSync::Reqwest,
+        MethodSync::Isahc,
     )
 }
 

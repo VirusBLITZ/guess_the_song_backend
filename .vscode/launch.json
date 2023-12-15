@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'guess_the_song_backend'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=guess_the_song_backend",
+                    "--package=guess_the_song_backend"
+                ],
+                "filter": {
+                    "name": "guess_the_song_backend",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'guess_the_song_backend'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=guess_the_song_backend",
+                    "--package=guess_the_song_backend"
+                ],
+                "filter": {
+                    "name": "guess_the_song_backend",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
