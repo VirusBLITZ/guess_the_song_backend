@@ -53,7 +53,7 @@ fn handle_game(game_id: u16, user_msgs: Receiver<(Arc<RwLock<User>>, u8)>) {
         let mut options = songs
             .iter()
             .map(|s| ((s.title.clone(), s.artist.clone())))
-            .choose_multiple(&mut rand::thread_rng(), 3);
+            .choose_multiple(&mut rand::thread_rng(), 4);
         if !options
             .iter()
             .any(|(t, a)| t == &song.title && a == &song.artist)
@@ -64,10 +64,10 @@ fn handle_game(game_id: u16, user_msgs: Receiver<(Arc<RwLock<User>>, u8)>) {
         broadcast_users(&players, ServerMessage::GameGuessOptions(options.clone()));
 
         let guessing_start: std::time::Instant = std::time::Instant::now();
-        let guess_timeout = Duration::from_secs(30);
+        let guess_timeout = Duration::from_secs(180);
         let remaining = guess_timeout - guessing_start.elapsed();
         let mut guessed_count = 0;
-        while guessed_count < players.len() && guessing_start.elapsed() < Duration::from_secs(30) {
+        while guessed_count < players.len() && guessing_start.elapsed() < Duration::from_secs(180) {
             if let Ok((user, guess)) = user_msgs.recv_timeout(remaining) {
                 let guessed_at = guessing_start.elapsed().as_secs() * 10;
                 match options.get(guess as usize) {
@@ -100,6 +100,7 @@ fn handle_game(game_id: u16, user_msgs: Receiver<(Arc<RwLock<User>>, u8)>) {
                     .collect(),
             ),
         );
+        thread::sleep(Duration::from_secs(5));
     }
     broadcast_users(&players, ServerMessage::GameEnded);
     let mut games = GAMES.write().unwrap();
