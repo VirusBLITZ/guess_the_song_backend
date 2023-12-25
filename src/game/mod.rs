@@ -220,9 +220,11 @@ impl Game {
             GameStatus::Playing(_, playphase) => {
                 if !Arc::ptr_eq(&user, &self.players[0]) {
                     let read_usr = user.read().unwrap();
-                    read_usr.ws.as_ref().unwrap().do_send(ServerMessage::Error(
-                        "cannot start guessing: you are not the leader".into(),
-                    ));
+                    if let Some(ws) = read_usr.ws.as_ref() {
+                        ws.do_send(ServerMessage::Error(
+                            "cannot start guessing: you are not the leader".into(),
+                        ))
+                    }
                     return;
                 }
                 *playphase = PlayPhase::GuessingSongs(handle_guessing(self.id));
@@ -230,20 +232,22 @@ impl Game {
             }
             _ => {
                 let read_usr = user.read().unwrap();
-                read_usr.ws.as_ref().unwrap().do_send(ServerMessage::Error(
-                    "cannot start guessing: game is not in song selection state".into(),
-                ));
+                if let Some(ws) = read_usr.ws.as_ref() {
+                    ws.do_send(ServerMessage::Error(
+                        "cannot start guessing: game is not in song selection state".into(),
+                    ))
+                }
             }
         }
     }
 }
 
-pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
+pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()> {
     let user_addr = match user.read().unwrap().ws.as_ref() {
         Some(addr) => addr.clone(),
         None => {
             print!("WTF?? usr addr got dropped somehow!");
-            return;
+            return None;
         }
     };
 
@@ -252,16 +256,13 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
     // println!("write user lock");
 
     let ack = || user_addr.do_send(ServerMessage::ServerAck);
-    let leave_current = || {
+    let leave_current = || -> Option<()> {
         let mut games = GAMES.write().unwrap();
-        let user_room_id = user.read().unwrap().game_id;
-        if let Some(room_id) = user_room_id {
-            if let Some(game) = games.get_mut(&room_id) {
-                if game.leave_game(user.clone()) {
-                    games.remove(&room_id);
-                }
-            }
+        let user_room_id = user.read().unwrap().game_id?;
+        if games.get_mut(&user_room_id)?.leave_game(user.clone()) {
+            games.remove(&user_room_id);
         }
+        Some(())
     };
 
     match action {
@@ -278,8 +279,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             user.read()
                 .unwrap()
                 .ws
-                .as_ref()
-                .unwrap()
+                .as_ref()?
                 .do_send(ServerMessage::GameCreated(game_id));
         }
         UserAction::JoinGame(room_id) => {
@@ -301,7 +301,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                         user_addr.do_send(game.ready(user));
                     }
                 }
-                None => user.ws.as_ref().unwrap().do_send(ServerMessage::Error(
+                None => user.ws.as_ref()?.do_send(ServerMessage::Error(
                     "cannot ready up: not in a game".into(),
                 )),
             }
@@ -310,16 +310,15 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             let user = user.read().unwrap();
             match user.game_id {
                 Some(game_id) => {
-                    if let Some(game) = GAMES.write().unwrap().get_mut(&game_id) {
-                        user_addr.do_send(game.unready(user));
-                    }
+                    let mut games = GAMES.write().unwrap();
+                    let game = games.get_mut(&game_id)?;
+                    user_addr.do_send(game.unready(user));
                 }
                 None => user
                     .ws
-                    .as_ref()
-                    .unwrap()
+                    .as_ref()?
                     .do_send(ServerMessage::Error("cannot unready: not in a game".into())),
-            }
+            };
         }
         UserAction::LeaveGame => {
             leave_current();
@@ -343,7 +342,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 user_addr.do_send(ServerMessage::Error(
                     "cannot add song: not in a game".into(),
                 ));
-                return;
+                return None;
             }
             let games = GAMES.read().unwrap();
             let game = games.get(&read_user.game_id.unwrap()).unwrap();
@@ -353,7 +352,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                     user_addr.do_send(ServerMessage::Error(
                         "cannot add song: game is not in song selection state".into(),
                     ));
-                    return;
+                    return None;
                 }
             }
             drop(read_user);
@@ -367,7 +366,14 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 match song_or_songs {
                     Ok(song_or_songs) => {
                         let mut games = GAMES.write().unwrap();
-                        let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
+                        let game = games
+                            .get_mut(match &read_user.game_id {
+                                Some(id) => id,
+                                None => {
+                                    return;
+                                }
+                            })
+                            .unwrap();
                         drop(read_user);
 
                         let game_songs = match &mut game.state {
@@ -404,7 +410,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 user_addr.do_send(ServerMessage::Error(
                     "cannot add song: not in a game".into(),
                 ));
-                return;
+                return None;
             }
             let mut games = GAMES.write().unwrap();
             let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
@@ -416,7 +422,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
                 user_addr.do_send(ServerMessage::Error(
                     "cannot add song: not in a game".into(),
                 ));
-                return;
+                return None;
             }
             let mut games = GAMES.write().unwrap();
             let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
@@ -432,5 +438,6 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) {
             }
         }
         _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
-    }
+    };
+    Some(())
 }

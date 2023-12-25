@@ -71,7 +71,7 @@ impl Actor for UserSocket {
             self.user.read().unwrap().id
         );
 
-        game::handle_user_msg(UserAction::LeaveGame, self.user.clone());
+        let _ = game::handle_user_msg(UserAction::LeaveGame, self.user.clone());
         actix::Running::Stop
     }
 }
@@ -132,7 +132,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for UserSocket {
             Ok(ws::Message::Text(text)) => match text.to_string().trim().split_once(' ') {
                 Some((action, body)) => {
                     self.hb = Instant::now();
-                    game::handle_user_msg(UserAction::from((action, body)), self.user.clone())
+                    let _ =
+                        game::handle_user_msg(UserAction::from((action, body)), self.user.clone());
                 }
                 _ => ctx.text("?"),
             },

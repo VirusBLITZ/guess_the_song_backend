@@ -168,22 +168,26 @@ pub fn get_suggestions(query: &str) -> Result<Vec<SearchItem>, InvidiousError> {
         .into_iter()
         .take(6)
         .collect::<Vec<_>>();
+
+    if results.is_empty() {
+        return Ok(vec![]);
+    }
+
     QUERY_CACHE
         .write()
         .unwrap()
         .insert(query.to_owned(), results.clone());
-    {
-        let mut write_id_cache = ID_METADATA_CACHE.write().unwrap();
 
-        results.iter().for_each(|search_item: &SearchItem| {
-            match search_item {
-                SearchItem::Video(vd) => {
-                    write_id_cache.insert(vd.id.clone(), vd.clone());
-                }
-                _ => (), // channel & playlist vids would need another request
-            };
-        });
-    }
+    let mut write_id_cache = ID_METADATA_CACHE.write().unwrap();
+    results.iter().for_each(|search_item: &SearchItem| {
+        match search_item {
+            SearchItem::Video(vd) => {
+                write_id_cache.insert(vd.id.clone(), vd.clone());
+            }
+            _ => (), // channel & playlist vids would need another request
+        };
+    });
+
     Ok(results)
 }
 
