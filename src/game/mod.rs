@@ -243,13 +243,7 @@ impl Game {
 }
 
 pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()> {
-    let user_addr = match user.read().unwrap().ws.as_ref() {
-        Some(addr) => addr.clone(),
-        None => {
-            print!("WTF?? usr addr got dropped somehow!");
-            return None;
-        }
-    };
+    let user_addr = user.read().unwrap().ws.as_ref()?.to_owned();
 
     // print!("write user lock");
     // let w = user.write().unwrap().name.clone();
