@@ -257,6 +257,7 @@ fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
             "--max-filesize",
             "6000k",
             "-o",
+            "--",
             "%(id)s",
             id,
         ]);
@@ -278,6 +279,14 @@ fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
                 return Err(GettingSongError::DownloadFailed(e));
             }
         };
+    }
+
+    // ensure the file is actually there
+    if !songs_dir.join(id).exists() {
+        return Err(GettingSongError::DownloadFailed(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        )));
     }
 
     Ok(Song {
