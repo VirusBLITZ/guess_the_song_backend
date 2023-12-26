@@ -257,8 +257,8 @@ fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
             "--max-filesize",
             "6000k",
             "-o",
-            "--",
             "%(id)s",
+            "--",
             id,
         ]);
 
