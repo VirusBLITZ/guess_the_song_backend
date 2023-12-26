@@ -12,7 +12,7 @@ use rand::{
     thread_rng,
 };
 
-use crate::model::user::User;
+use crate::model::{song::Song, user::User};
 
 use super::{ServerMessage, GAMES};
 
@@ -32,6 +32,10 @@ fn broadcast_users(users: &Vec<Arc<RwLock<User>>>, msg: ServerMessage) {
     }
 }
 
+fn song_to_title_artist_tuple(song: &Song) -> (String, String) {
+    (song.title.clone(), song.artist.clone())
+}
+
 fn handle_game(game_id: u16, user_msgs: Receiver<PlayerGuess>) {
     let mut games = GAMES.write().unwrap();
     let game = games.get_mut(&game_id).unwrap();
@@ -39,25 +43,34 @@ fn handle_game(game_id: u16, user_msgs: Receiver<PlayerGuess>) {
         super::GameStatus::Playing(ref mut songs, _) => songs,
         _ => return,
     };
-    let songs = std::mem::take(songs);
+    let mut songs = std::mem::take(songs);
     let players = game.players.clone();
     drop(games);
 
     let mut leaderboad: Vec<(Arc<RwLock<User>>, usize)> = Vec::new();
+    songs.shuffle(&mut thread_rng());
 
+    let mut remaining_songs = songs.iter();
     for song in &songs {
         broadcast_users(&players, ServerMessage::GamePlayAudio(song.id.clone()));
 
-        let mut options = songs
-            .iter()
-            .map(|s| ((s.title.clone(), s.artist.clone())))
+        let mut options = remaining_songs
+            .clone()
+            .map(song_to_title_artist_tuple)
             .choose_multiple(&mut rand::thread_rng(), 4);
+        if options.len() < 4 {
+            options.extend(
+                songs
+                    .choose_multiple(&mut thread_rng(), 4 - options.len())
+                    .map(song_to_title_artist_tuple)
+                    .into_iter(),
+            );
+        }
         if !options
             .iter()
             .any(|(t, a)| t == &song.title && a == &song.artist)
         {
-            *options.choose_mut(&mut thread_rng()).unwrap() =
-                (song.title.clone(), song.artist.clone());
+            *options.choose_mut(&mut thread_rng()).unwrap() = song_to_title_artist_tuple(song);
         }
         let correct_idx = options
             .iter()
@@ -92,6 +105,7 @@ fn handle_game(game_id: u16, user_msgs: Receiver<PlayerGuess>) {
                 guessed_count += 1;
             }
         }
+        remaining_songs.next();
         broadcast_users(&players, ServerMessage::Correct(correct_idx));
 
         // rx.try_recv()
@@ -107,6 +121,7 @@ fn handle_game(game_id: u16, user_msgs: Receiver<PlayerGuess>) {
         );
         thread::sleep(Duration::from_secs(5));
     }
+    thread::sleep(Duration::from_secs(10));
     broadcast_users(&players, ServerMessage::GameEnded);
     let mut games = GAMES.write().unwrap();
     if let Some(game) = games.get_mut(&game_id) {
