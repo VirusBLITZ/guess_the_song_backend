@@ -262,7 +262,9 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
     // let w = user.write().unwrap().name.clone();
     // println!("write user lock");
 
-    let ack = || user_addr.do_send(ServerMessage::ServerAck);
+    let user_ptr_addr = Arc::as_ptr(&user) as usize;
+    let send_msg = |msg: ServerMessage| user_addr.do_send(msg);
+    let ack = || send_msg(ServerMessage::ServerAck);
     let leave_current = || -> Option<()> {
         let mut games = GAMES.write().unwrap();
         let user_room_id = user.read().unwrap().game_id?;
@@ -283,7 +285,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
             let game_id = game.id;
             game.join_game(user.clone(), user_addr.clone());
             GAMES.write().unwrap().insert(game.id, game);
-            user_addr.do_send(ServerMessage::GameCreated(game_id));
+            send_msg(ServerMessage::GameCreated(game_id));
         }
         UserAction::JoinGame(room_id) => {
             leave_current();
@@ -293,7 +295,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                     game.join_game(user.clone(), user_addr);
                     println!("joined room")
                 }
-                None => user_addr.do_send(ServerMessage::GameNotFound),
+                None => send_msg(ServerMessage::GameNotFound),
             };
         }
         UserAction::ReadyUp => {
@@ -301,7 +303,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
             match user.game_id {
                 Some(game_id) => {
                     if let Some(game) = GAMES.write().unwrap().get_mut(&game_id) {
-                        user_addr.do_send(game.ready(user));
+                        send_msg(game.ready(user));
                     }
                 }
                 None => user.ws.as_ref()?.do_send(ServerMessage::Error(
@@ -315,7 +317,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                 Some(game_id) => {
                     let mut games = GAMES.write().unwrap();
                     let game = games.get_mut(&game_id)?;
-                    user_addr.do_send(game.unready(user));
+                    send_msg(game.unready(user));
                 }
                 None => user
                     .ws
@@ -334,7 +336,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
             // }
         }
         UserAction::GetSuggestions(query) => {
-            user_addr.do_send(match music_handler::get_suggestions(&query) {
+            send_msg(match music_handler::get_suggestions(&query) {
                 Ok(songs) => ServerMessage::Suggestion(songs),
                 Err(err) => ServerMessage::Error(err.to_string()),
             });
@@ -342,7 +344,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
         UserAction::AddSong(source_id) => {
             let read_user = user.read().unwrap();
             if read_user.game_id.is_none() {
-                user_addr.do_send(ServerMessage::Error(
+                send_msg(ServerMessage::Error(
                     "cannot add song: not in a game".into(),
                 ));
                 return None;
@@ -353,7 +355,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                 &game.state,
                 GameStatus::Playing(PlayPhase::SelectingSongs(_))
             ) {
-                user_addr.do_send(ServerMessage::Error(
+                send_msg(ServerMessage::Error(
                     "cannot add song: game is not in song selection state".into(),
                 ));
                 return None;
@@ -378,8 +380,6 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                             })
                             .unwrap();
                         drop(read_user);
-
-                        let user_ptr_addr: usize = Arc::as_ptr(&user_c) as usize;
 
                         let user_songs = match &mut game.state {
                             GameStatus::Playing(game_songs) => match game_songs {
@@ -420,10 +420,35 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
             });
             ack();
         }
+        UserAction::RemoveSong(idx) => {
+            let read_user = user.read().unwrap();
+            let mut games = GAMES.write().unwrap();
+            let game = games.get_mut(&read_user.game_id?)?;
+            let user_songs = match &mut game.state {
+                GameStatus::Playing(phase) => match phase {
+                    PlayPhase::SelectingSongs(user_songs) => user_songs.get_mut(&user_ptr_addr)?,
+                    _ => return None,
+                },
+                _ => {
+                    send_msg(ServerMessage::Error(
+                        "cannot remove song: game is not in song selection state".into(),
+                    ));
+                    return None;
+                }
+            };
+            if idx as usize >= user_songs.len() {
+                send_msg(ServerMessage::Error(
+                    "cannot remove song: index out of bounds".into(),
+                ));
+                return None;
+            }
+            user_songs.remove(idx as usize);
+            ack();
+        }
         UserAction::StartGuessing => {
             let read_user = user.read().unwrap();
             if read_user.game_id.is_none() {
-                user_addr.do_send(ServerMessage::Error(
+                send_msg(ServerMessage::Error(
                     "cannot start guessing: not in a game".into(),
                 ));
                 return None;
@@ -435,7 +460,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
         UserAction::GuessSong(idx) => {
             let read_user = user.read().unwrap();
             if read_user.game_id.is_none() {
-                user_addr.do_send(ServerMessage::Error(
+                send_msg(ServerMessage::Error(
                     "cannot add song: not in a game".into(),
                 ));
                 return None;
@@ -447,13 +472,13 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                     tx.send((user.clone(), idx)).unwrap();
                 }
                 _ => {
-                    user_addr.do_send(ServerMessage::Error(
+                    send_msg(ServerMessage::Error(
                         "cannot guess song: game is not in guessing state".into(),
                     ));
                 }
             }
         }
-        _ => user_addr.do_send(ServerMessage::Error("Invalid Action".to_string())),
+        _ => send_msg(ServerMessage::Error("Invalid Action".to_string())),
     };
     Some(())
 }
