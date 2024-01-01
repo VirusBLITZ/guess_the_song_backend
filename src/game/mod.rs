@@ -364,6 +364,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
             drop(games); // unlock during download
 
             let user_c = user.clone();
+            let cloned_addr = user_addr.clone();
             thread::spawn(move || {
                 let read_user = user_c.read().unwrap();
 
@@ -408,6 +409,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                                 user_songs.extend(songs);
                             }
                         }
+                        cloned_addr.do_send(ServerMessage::AddedSong(user_songs.last().unwrap().clone()));
                     }
                     Err(err) => {
                         read_user
@@ -443,7 +445,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                 return None;
             }
             user_songs.remove(idx as usize);
-            ack();
+            send_msg(ServerMessage::RemovedSong(idx));
         }
         UserAction::StartGuessing => {
             let read_user = user.read().unwrap();
