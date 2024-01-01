@@ -26,3 +26,9 @@ pub struct Song {
     pub title: String,
     pub artist: String,
 }
+
+impl PartialEq for Song {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}

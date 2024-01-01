@@ -15,7 +15,7 @@ use crate::{
     music_handler, UserSocket,
 };
 
-use self::guessing_songs::handle_guessing;
+use self::guessing_songs::{handle_game_end, handle_guessing};
 
 static GAMES: Lazy<RwLock<HashMap<u16, Game>>> = Lazy::new(|| RwLock::new(HashMap::new()));
 
@@ -30,6 +30,7 @@ pub enum UserAction {
     StartGame,
     GetSuggestions(String),
     AddSong(String),
+    RemoveSong(u32),
     StartGuessing,
     GuessSong(u8),
     LeaveGame,
@@ -47,6 +48,7 @@ impl From<(&str, &str)> for UserAction {
             ("start", _) => UserAction::StartGame,
             ("suggest", query) => UserAction::GetSuggestions(query.to_string()),
             ("add", id) => UserAction::AddSong(id.to_string()),
+            ("remove", idx) => UserAction::RemoveSong(idx.parse().unwrap_or(0)),
             ("start_guessing", _) => UserAction::StartGuessing,
             ("guess", idx) => UserAction::GuessSong(idx.parse().unwrap_or(0)),
             ("leave", _) => UserAction::LeaveGame,
@@ -71,6 +73,8 @@ pub enum ServerMessage {
     // song selection
     GameStartSelect,
     Suggestion(Vec<invidious::hidden::SearchItem>),
+    AddedSong(Song),
+    RemovedSong(u32),
     // guessing
     GameStartGuessing,
     GamePlayAudio(String),
@@ -86,13 +90,13 @@ pub enum ServerMessage {
 #[derive(Clone, Debug)]
 pub enum GameStatus {
     Lobby(u8), // ready count
-    Playing(Vec<Song>, PlayPhase),
+    Playing(PlayPhase),
 }
 
 #[derive(Clone, Debug)]
 pub enum PlayPhase {
-    SelectingSongs,
-    GuessingSongs(SyncSender<(Arc<RwLock<User>>, u8)>),
+    SelectingSongs(HashMap<usize, Vec<Song>>),
+    GuessingSongs(SyncSender<(Arc<RwLock<User>>, u8)>), // game thread sender
 }
 
 #[derive(Clone)]
@@ -211,34 +215,43 @@ impl Game {
 
     fn start_game(&mut self) {
         // self.state = GameStatus::Playing(Vec::new(), PlayPhase::SelectingSongs);
-        self.set_state(GameStatus::Playing(Vec::new(), PlayPhase::SelectingSongs));
+        self.set_state(GameStatus::Playing(PlayPhase::SelectingSongs(
+            HashMap::new(),
+        )));
         self.broadcast_message(ServerMessage::GameStartSelect);
     }
 
-    fn start_guessing(&mut self, user: Arc<RwLock<User>>) {
+    fn start_guessing(&mut self, user: Arc<RwLock<User>>) -> Option<()> {
+        let read_usr = user.read().unwrap();
+        let user_addr = read_usr.ws.as_ref()?;
         match &mut self.state {
-            GameStatus::Playing(_, playphase) => {
+            GameStatus::Playing(playphase) => {
                 if !Arc::ptr_eq(&user, &self.players[0]) {
-                    let read_usr = user.read().unwrap();
-                    if let Some(ws) = read_usr.ws.as_ref() {
-                        ws.do_send(ServerMessage::Error(
-                            "cannot start guessing: you are not the leader".into(),
-                        ))
-                    }
-                    return;
+                    user_addr.do_send(ServerMessage::Error(
+                        "cannot start guessing: you are not the leader".into(),
+                    ));
+                    return None;
                 }
-                *playphase = PlayPhase::GuessingSongs(handle_guessing(self.id));
+                let songs = match playphase {
+                    PlayPhase::SelectingSongs(songs) => songs,
+                    _ => {
+                        user_addr.do_send(ServerMessage::Error(
+                            "cannot start guessing: game is not in song selection state".into(),
+                        ));
+                        return None;
+                    }
+                };
+                let (tx, game_handle) = handle_guessing(self.players.clone(), songs);
+                handle_game_end(game_handle, self.id);
+
+                *playphase = PlayPhase::GuessingSongs(tx);
                 self.broadcast_message(ServerMessage::GameStartGuessing);
             }
-            _ => {
-                let read_usr = user.read().unwrap();
-                if let Some(ws) = read_usr.ws.as_ref() {
-                    ws.do_send(ServerMessage::Error(
-                        "cannot start guessing: game is not in song selection state".into(),
-                    ))
-                }
-            }
-        }
+            _ => user_addr.do_send(ServerMessage::Error(
+                "cannot start guessing: game is not in song selection state".into(),
+            )),
+        };
+        None
     }
 }
 
@@ -270,11 +283,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
             let game_id = game.id;
             game.join_game(user.clone(), user_addr.clone());
             GAMES.write().unwrap().insert(game.id, game);
-            user.read()
-                .unwrap()
-                .ws
-                .as_ref()?
-                .do_send(ServerMessage::GameCreated(game_id));
+            user_addr.do_send(ServerMessage::GameCreated(game_id));
         }
         UserAction::JoinGame(room_id) => {
             leave_current();
@@ -339,15 +348,15 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                 return None;
             }
             let games = GAMES.read().unwrap();
-            let game = games.get(&read_user.game_id.unwrap()).unwrap();
-            match &game.state {
-                GameStatus::Playing(_, PlayPhase::SelectingSongs) => {}
-                _ => {
-                    user_addr.do_send(ServerMessage::Error(
-                        "cannot add song: game is not in song selection state".into(),
-                    ));
-                    return None;
-                }
+            let game = games.get(&read_user.game_id?)?;
+            if !matches!(
+                &game.state,
+                GameStatus::Playing(PlayPhase::SelectingSongs(_))
+            ) {
+                user_addr.do_send(ServerMessage::Error(
+                    "cannot add song: game is not in song selection state".into(),
+                ));
+                return None;
             }
             drop(read_user);
             drop(games); // unlock during download
@@ -370,8 +379,21 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                             .unwrap();
                         drop(read_user);
 
-                        let game_songs = match &mut game.state {
-                            GameStatus::Playing(game_songs, _) => game_songs,
+                        let user_ptr_addr: usize = Arc::as_ptr(&user_c) as usize;
+
+                        let user_songs = match &mut game.state {
+                            GameStatus::Playing(game_songs) => match game_songs {
+                                PlayPhase::SelectingSongs(user_songs) => {
+                                    match user_songs.get_mut(&user_ptr_addr) {
+                                        Some(user_songs) => user_songs,
+                                        None => {
+                                            user_songs.insert(user_ptr_addr, Vec::new());
+                                            user_songs.get_mut(&user_ptr_addr).unwrap()
+                                        }
+                                    }
+                                }
+                                _ => return,
+                            },
                             _ => {
                                 println!("Game started before song download could finish");
                                 return;
@@ -380,10 +402,10 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
 
                         match song_or_songs {
                             music_handler::OneOrMoreSongs::One(song) => {
-                                game_songs.push(song);
+                                user_songs.push(song);
                             }
                             music_handler::OneOrMoreSongs::More(songs) => {
-                                game_songs.extend(songs);
+                                user_songs.extend(songs);
                             }
                         }
                     }
@@ -402,7 +424,7 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
             let read_user = user.read().unwrap();
             if read_user.game_id.is_none() {
                 user_addr.do_send(ServerMessage::Error(
-                    "cannot add song: not in a game".into(),
+                    "cannot start guessing: not in a game".into(),
                 ));
                 return None;
             }
@@ -418,10 +440,10 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                 ));
                 return None;
             }
-            let mut games = GAMES.write().unwrap();
-            let game = games.get_mut(&read_user.game_id.unwrap()).unwrap();
-            match &mut game.state {
-                GameStatus::Playing(_, PlayPhase::GuessingSongs(tx)) => {
+            let games = GAMES.read().unwrap();
+            let game = games.get(&read_user.game_id.unwrap()).unwrap();
+            match &game.state {
+                GameStatus::Playing(PlayPhase::GuessingSongs(tx)) => {
                     tx.send((user.clone(), idx)).unwrap();
                 }
                 _ => {

@@ -100,6 +100,11 @@ impl Handler<ServerMessage> for UserSocket {
                 )
                 .unwrap()
             ),
+            ServerMessage::AddedSong(song) => format!(
+                "added_song {}",
+                serde_json::to_string(&(song.title, song.artist)).unwrap()
+            ),
+            ServerMessage::RemovedSong(song_idx) => format!("removed_song {}", song_idx),
             ServerMessage::GameStartGuessing => "game_start_guessing".to_string(),
             ServerMessage::GamePlayAudio(id) => format!("game_play_audio {}", id),
             ServerMessage::GameGuessOptions(options) => format!(

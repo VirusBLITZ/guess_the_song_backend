@@ -296,6 +296,7 @@ fn download_song_from_id(id: &str) -> Result<Song, GettingSongError> {
     })
 }
 
+#[derive(Debug)]
 pub enum OneOrMoreSongs {
     One(Song),
     More(Vec<Song>),
