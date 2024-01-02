@@ -404,12 +404,17 @@ pub fn handle_user_msg(action: UserAction, user: Arc<RwLock<User>>) -> Option<()
                         match song_or_songs {
                             music_handler::OneOrMoreSongs::One(song) => {
                                 user_songs.push(song);
+                                cloned_addr.do_send(ServerMessage::AddedSong(
+                                    user_songs.last().unwrap().clone(),
+                                ));
                             }
                             music_handler::OneOrMoreSongs::More(songs) => {
+                                songs.iter().for_each(|song| {
+                                    cloned_addr.do_send(ServerMessage::AddedSong(song.clone()))
+                                });
                                 user_songs.extend(songs);
                             }
                         }
-                        cloned_addr.do_send(ServerMessage::AddedSong(user_songs.last().unwrap().clone()));
                     }
                     Err(err) => {
                         read_user

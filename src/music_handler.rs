@@ -19,7 +19,7 @@ use invidious::{
     hidden::SearchItem, ClientSync, ClientSyncTrait, CommonVideo, InvidiousError, MethodSync,
 };
 use once_cell::sync::Lazy;
-use rand::seq::IteratorRandom;
+use rand::{seq::SliceRandom, Rng};
 use serde::Deserialize;
 
 use crate::model::song::{GettingSongError, Song};
@@ -202,22 +202,37 @@ fn songs_from_common_vids(vids: Vec<CommonVideo>) -> Result<Vec<Song>, GettingSo
     let mut songs = vec![];
     let (tx, rx) = std::sync::mpsc::channel::<Option<Song>>();
 
-    for video in vids
-        .into_iter()
-        .take(30)
-        .choose_multiple(&mut rand::thread_rng(), 5)
-    {
+    let song_count = std::cmp::min(vids.len(), 5);
+    let mut top30: Vec<CommonVideo> = vids.into_iter().take(30).collect();
+    let mut initial_vids = vec![];
+    for _ in 0..song_count {
+        initial_vids.push(top30.swap_remove(rand::thread_rng().gen_range(0..top30.len())));
+    }
+
+    for vid in initial_vids {
         let tx = tx.clone();
         thread::spawn(move || {
-            tx.send(download_song_from_id(&video.id).ok()).unwrap();
+            tx.send(download_song_from_id(&vid.id).ok()).unwrap();
         });
     }
 
-    for _ in 0..5 {
+    for _ in 0..song_count {
         if let Some(song) = rx.recv().unwrap() {
             songs.push(song);
         }
     }
+
+    let mut attempts = 0;
+    while songs.len() < song_count && attempts < 5 {
+        let vid = top30.choose(&mut rand::thread_rng()).unwrap();
+        if !songs.iter().any(|s| s.id == vid.id) {
+            if let Some(song) = download_song_from_id(&vid.id).ok() {
+                songs.push(song);
+            }
+        }
+        attempts += 1;
+    }
+
     Ok(songs)
 }
 
